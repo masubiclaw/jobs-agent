@@ -50,6 +50,9 @@ Thumbs.db
 # ChromaDB data
 .chroma/
 
+# Job cache data
+.job_cache/
+
 # Generated PDFs (keep templates, ignore generated)
 *.pdf
 !pdfGenTest/*.pdf

@@ -1,58 +1,162 @@
 """Tools for the job search agent."""
 
-from .mcp_tools import (
-    # Apify MCP (unified)
-    get_apify_mcp,
-    # Glassdoor
-    get_glassdoor_tools,
-    get_glassdoor_jobs_mcp,
-    get_glassdoor_company_mcp,
-    get_glassdoor_company_search_mcp,
-    # Indeed
-    get_indeed_tools,
-    get_indeed_jobs_mcp,
-    get_indeed_company_mcp,
-    # Multi-platform
-    get_jobspy_mcp,
-    get_all_job_platform_tools,
+from .jobspy_tools import (
+    search_jobs_with_jobspy,
+    search_jobs_tool,
+    JOBSPY_AVAILABLE,
 )
 
-from .pdf_tools import (
-    # PDF Generation
-    generate_resume_pdf,
-    generate_cover_letter_pdf,
-    generate_resume_pdf_tool,
-    generate_cover_letter_pdf_tool,
-    list_generated_pdfs,
-    delete_pdf,
-    is_pdf_generation_available,
-    get_resume_template_presets,
-    get_output_directory,
+from .prompt_to_search_params import (
+    prompt_to_search_params,
+    prompt_to_search_params_tool,
+)
+
+from .local_cache import (
+    get_cache as get_local_cache,
+    LocalCache,
+    get_exclusions,
+    add_exclusion,
+    remove_exclusion,
+    get_cached_jobs,
+    get_cache_stats as get_local_cache_stats,
+    get_exclusions_tool,
+    add_exclusion_tool,
+    remove_exclusion_tool,
+    get_cached_jobs_tool,
+    get_cache_stats_tool as get_local_cache_stats_tool,
+)
+
+from .job_cache import (
+    JobCache,
+    get_cache as get_job_cache,
+    cache_job,
+    search_cached_jobs,
+    get_cache_stats,
+    clear_job_cache,
+    remove_company_from_cache,
+    cache_job_tool,
+    search_cached_jobs_tool,
+    get_cache_stats_tool,
+    clear_job_cache_tool,
+    remove_company_tool,
+    # Match caching
+    cache_job_match,
+    get_cached_match,
+    list_cached_matches,
+    clear_cached_matches,
+    aggregate_job_matches,
+    cache_job_match_tool,
+    get_cached_match_tool,
+    list_cached_matches_tool,
+    clear_cached_matches_tool,
+    aggregate_job_matches_tool,
+)
+
+from .profile_store import (
+    ProfileStore,
+    get_store as get_profile_store,
+    create_profile,
+    get_profile,
+    update_profile,
+    add_skill_to_profile,
+    set_job_preferences,
+    set_resume_summary,
+    get_search_context,
+    list_all_profiles,
+    create_profile_tool,
+    get_profile_tool,
+    update_profile_tool,
+    add_skill_tool,
+    set_preferences_tool,
+    set_resume_tool,
+    get_search_context_tool,
+    list_profiles_tool,
+)
+
+from .job_links_scraper import (
+    parse_markdown_links,
+    scrape_webpage,
+    scrape_job_links,
+    scrape_single_source,
+    get_links_summary,
+    scrape_job_links_tool,
+    get_links_summary_tool,
+    scrape_single_source_tool,
+    parse_markdown_links_tool,
 )
 
 __all__ = [
-    # Apify MCP (unified)
-    "get_apify_mcp",
-    # Glassdoor
-    "get_glassdoor_tools",
-    "get_glassdoor_jobs_mcp",
-    "get_glassdoor_company_mcp",
-    "get_glassdoor_company_search_mcp",
-    # Indeed
-    "get_indeed_tools",
-    "get_indeed_jobs_mcp",
-    "get_indeed_company_mcp",
-    # Multi-platform
-    "get_jobspy_mcp",
-    "get_all_job_platform_tools",
-    # PDF Generation
-    "generate_resume_pdf",
-    "generate_cover_letter_pdf",
-    "generate_resume_pdf_tool",
-    "generate_cover_letter_pdf_tool",
-    "list_generated_pdfs",
-    "delete_pdf",
-    "is_pdf_generation_available",
-    "get_resume_template_presets",
-    "get_output_directory",
+    # JobSpy
+    "search_jobs_with_jobspy",
+    "search_jobs_tool",
+    "JOBSPY_AVAILABLE",
+    # Prompt parser
+    "prompt_to_search_params",
+    "prompt_to_search_params_tool",
+    # Local cache (exclusions)
+    "get_local_cache",
+    "LocalCache",
+    "get_exclusions",
+    "add_exclusion",
+    "remove_exclusion",
+    "get_cached_jobs",
+    "get_local_cache_stats",
+    "get_exclusions_tool",
+    "add_exclusion_tool",
+    "remove_exclusion_tool",
+    "get_cached_jobs_tool",
+    "get_local_cache_stats_tool",
+    # Job cache (vector search)
+    "JobCache",
+    "get_job_cache",
+    "cache_job",
+    "search_cached_jobs",
+    "get_cache_stats",
+    "clear_job_cache",
+    "remove_company_from_cache",
+    "cache_job_tool",
+    "search_cached_jobs_tool",
+    "get_cache_stats_tool",
+    "clear_job_cache_tool",
+    "remove_company_tool",
+    # Match caching
+    "cache_job_match",
+    "get_cached_match",
+    "list_cached_matches",
+    "clear_cached_matches",
+    "aggregate_job_matches",
+    "cache_job_match_tool",
+    "get_cached_match_tool",
+    "list_cached_matches_tool",
+    "clear_cached_matches_tool",
+    "aggregate_job_matches_tool",
+    # Profile store
+    "ProfileStore",
+    "get_profile_store",
+    "create_profile",
+    "get_profile",
+    "update_profile",
+    "add_skill_to_profile",
+    "set_job_preferences",
+    "set_resume_summary",
+    "get_search_context",
+    "list_all_profiles",
+    "create_profile_tool",
+    "get_profile_tool",
+    "update_profile_tool",
+    "add_skill_tool",
+    "set_preferences_tool",
+    "set_resume_tool",
+    "get_search_context_tool",
+    "list_profiles_tool",
+    # Job links scraper
+    "parse_markdown_links",
+    "scrape_webpage",
+    "scrape_job_links",
+    "scrape_single_source",
+    "get_links_summary",
+    "scrape_job_links_tool",
+    "get_links_summary_tool",
+    "scrape_single_source_tool",
+    "parse_markdown_links_tool",
 ]

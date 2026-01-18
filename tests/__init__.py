@@ -1,2 +1,1 @@
-"""Test package for job search agent."""
-
+"""Tests for job agent coordinator."""

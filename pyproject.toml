@@ -16,6 +16,9 @@ dependencies = [
     "python-jobspy>=1.1.0",
     "reportlab>=4.0.0",
     "pandas>=2.0.0",
+    "ollama>=0.4.0",
+    "beautifulsoup4>=4.12.0",
+    "playwright>=1.40.0",
 ]
 
 requires-python = ">=3.10,<3.13"
