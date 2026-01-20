@@ -2,14 +2,44 @@
 
 A multi-agent job search and matching system built with Google ADK. Features intelligent job searching, profile matching, web scraping, and local caching with vector search.
 
+## Quick Start
+
+```bash
+# Clone and setup
+git clone https://github.com/masubi/jobs-agent.git
+cd jobs-agent
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+playwright install chromium
+
+# Setup Ollama (local LLM)
+# Download from https://ollama.ai/ then:
+ollama pull gemma3:27b
+ollama pull gemma3:12b
+
+# Create .env file
+cat > .env << 'EOF'
+LLM_PROVIDER=ollama
+LLM_MODEL=ollama/gemma3:27b
+OLLAMA_MODEL=gemma3:27b
+OLLAMA_FAST_MODEL=gemma3:12b
+OLLAMA_BASE_URL=http://localhost:11434
+JOB_AGENT_LOG_LEVEL=INFO
+EOF
+
+# Run the agent
+adk web
+# Open http://localhost:8000
+```
+
 ## Features
 
 - 🔍 **Job Search** - Search across Indeed, LinkedIn, Glassdoor, ZipRecruiter via JobSpy
-- 🎯 **Job Matching** - Analyze jobs against your profile with skill gap analysis
+- 🎯 **Job Matching** - Analyze jobs against your profile with skill gap analysis (fetches job descriptions automatically)
 - 👤 **Profile Management** - Store skills, preferences, and job search criteria
 - 💾 **Smart Caching** - Local persistence with ChromaDB vector search (600+ jobs pre-cached)
-- 🕷️ **Web Scraping** - Scrape job boards from curated company list
-- 📊 **Match Aggregation** - Ranked summaries of all analyzed jobs
+- 🕷️ **Web Scraping** - Scrape job boards with URL extraction for direct job links
+- 📊 **Match Aggregation** - Ranked summaries of all analyzed jobs in TOON format
 
 ## Architecture
 
@@ -141,9 +171,15 @@ python scripts/show_cache_stats.py
 python scripts/show_cache_stats.py --matches    # Include match stats
 
 # Run job matching on all cached jobs
-python scripts/run_job_matcher.py               # Match all 664 jobs (~1 sec)
+python scripts/run_job_matcher.py               # Match all jobs (uses cache)
 python scripts/run_job_matcher.py --limit 50    # Match first 50 jobs
 python scripts/run_job_matcher.py --min-score 60  # Show only 60%+ matches
+python scripts/run_job_matcher.py -v            # Verbose output
+
+# Rebuild ALL matches from scratch (when profile changes)
+python scripts/rebuild_all_matches.py           # Rebuild all matches
+python scripts/rebuild_all_matches.py --fetch   # Fetch job descriptions from URLs (slower but more accurate)
+python scripts/rebuild_all_matches.py --limit 100  # Rebuild first 100 only
 
 # Run job scraper
 python scripts/run_job_scraper.py               # Show available sources
@@ -217,6 +253,7 @@ jobs-agent/
 │       └── prompt_to_search_params.py
 ├── scripts/
 │   ├── run_job_matcher.py          # Batch job matching
+│   ├── rebuild_all_matches.py      # Rebuild matches from scratch
 │   ├── run_job_scraper.py          # Batch job scraping
 │   └── show_cache_stats.py         # Cache statistics
 ├── tests/
