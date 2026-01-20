@@ -7,6 +7,8 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
+from .toon_format import jobs_to_toon, jobs_from_toon, matches_to_toon, matches_from_toon, to_toon, from_toon
+
 logger = logging.getLogger(__name__)
 
 # Try to import ChromaDB for vector search
@@ -36,11 +38,17 @@ class JobCache:
         self.cache_dir = Path(cache_dir) if cache_dir else Path(".job_cache")
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         
-        self.jobs_file = self.cache_dir / "jobs.json"
-        self.metadata_file = self.cache_dir / "metadata.json"
-        self.matches_file = self.cache_dir / "matches.json"
+        # TOON format files
+        self.jobs_file = self.cache_dir / "jobs.toon"
+        self.metadata_file = self.cache_dir / "metadata.toon"
+        self.matches_file = self.cache_dir / "matches.toon"
         
-        # Load existing jobs
+        # Legacy JSON files (for migration)
+        self._jobs_json = self.cache_dir / "jobs.json"
+        self._metadata_json = self.cache_dir / "metadata.json"
+        self._matches_json = self.cache_dir / "matches.json"
+        
+        # Load existing jobs (with migration from JSON if needed)
         self._jobs: Dict[str, Dict[str, Any]] = self._load_jobs()
         self._metadata = self._load_metadata()
         self._matches: Dict[str, Dict[str, Any]] = self._load_matches()
@@ -70,41 +78,72 @@ class JobCache:
             self._collection = None
     
     def _load_jobs(self) -> Dict[str, Dict[str, Any]]:
-        """Load jobs from disk."""
+        """Load jobs from disk (TOON format, with JSON fallback for migration)."""
+        # Try TOON format first
         if self.jobs_file.exists():
             try:
-                return json.loads(self.jobs_file.read_text())
+                return jobs_from_toon(self.jobs_file.read_text())
             except Exception as e:
-                logger.error(f"Failed to load jobs: {e}")
+                logger.error(f"Failed to load jobs from TOON: {e}")
+        
+        # Fallback to JSON (migration)
+        if self._jobs_json.exists():
+            try:
+                jobs = json.loads(self._jobs_json.read_text())
+                logger.info(f"📦 Migrating {len(jobs)} jobs from JSON to TOON format...")
+                return jobs
+            except Exception as e:
+                logger.error(f"Failed to load jobs from JSON: {e}")
+        
         return {}
     
     def _load_metadata(self) -> Dict[str, Any]:
-        """Load cache metadata."""
+        """Load cache metadata (TOON format, with JSON fallback)."""
+        # Try TOON format first
         if self.metadata_file.exists():
             try:
-                return json.loads(self.metadata_file.read_text())
+                return from_toon(self.metadata_file.read_text())
             except:
                 pass
+        
+        # Fallback to JSON
+        if self._metadata_json.exists():
+            try:
+                return json.loads(self._metadata_json.read_text())
+            except:
+                pass
+        
         return {"created": datetime.now().isoformat(), "total_added": 0}
     
     def _load_matches(self) -> Dict[str, Dict[str, Any]]:
-        """Load job match results from disk."""
+        """Load job match results from disk (TOON format, with JSON fallback)."""
+        # Try TOON format first
         if self.matches_file.exists():
             try:
-                return json.loads(self.matches_file.read_text())
+                return matches_from_toon(self.matches_file.read_text())
             except Exception as e:
-                logger.error(f"Failed to load matches: {e}")
+                logger.error(f"Failed to load matches from TOON: {e}")
+        
+        # Fallback to JSON (migration)
+        if self._matches_json.exists():
+            try:
+                matches = json.loads(self._matches_json.read_text())
+                logger.info(f"📦 Migrating {len(matches)} matches from JSON to TOON format...")
+                return matches
+            except Exception as e:
+                logger.error(f"Failed to load matches from JSON: {e}")
+        
         return {}
     
     def _save_jobs(self):
-        """Save jobs to disk."""
-        self.jobs_file.write_text(json.dumps(self._jobs, indent=2, default=str))
+        """Save jobs to disk in TOON format."""
+        self.jobs_file.write_text(jobs_to_toon(self._jobs))
         self._metadata["last_updated"] = datetime.now().isoformat()
-        self.metadata_file.write_text(json.dumps(self._metadata, indent=2))
+        self.metadata_file.write_text(to_toon(self._metadata))
     
     def _save_matches(self):
-        """Save match results to disk."""
-        self.matches_file.write_text(json.dumps(self._matches, indent=2, default=str))
+        """Save match results to disk in TOON format."""
+        self.matches_file.write_text(matches_to_toon(self._matches))
     
     # === Job Match Methods ===
     

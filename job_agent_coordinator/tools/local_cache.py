@@ -9,20 +9,30 @@ from typing import Optional
 
 from google.adk.tools import FunctionTool
 
+from .toon_format import to_toon, from_toon
+
 logger = logging.getLogger(__name__)
 
 CACHE_DIR = Path(os.getenv("JOB_AGENT_CACHE", ".job_cache"))
 
 
 class LocalCache:
-    """JSON file cache for job search data."""
+    """TOON file cache for job search data (with JSON fallback for migration)."""
     
     def __init__(self, cache_dir: Path = CACHE_DIR):
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self.exclusions_file = self.cache_dir / "exclusions.json"
-        self.jobs_file = self.cache_dir / "jobs.json"
-        self.settings_file = self.cache_dir / "settings.json"
+        
+        # TOON format files
+        self.exclusions_file = self.cache_dir / "exclusions.toon"
+        self.settings_file = self.cache_dir / "settings.toon"
+        
+        # Legacy JSON files (for migration)
+        self._exclusions_json = self.cache_dir / "exclusions.json"
+        self._settings_json = self.cache_dir / "settings.json"
+        
+        # Note: jobs are now in job_cache.py, not here
+        self.jobs_file = None  # Deprecated - use JobCache instead
     
     def get_exclusions(self) -> list[str]:
         return self._load(self.exclusions_file).get("companies", [])
@@ -79,15 +89,28 @@ class LocalCache:
         return {"total": len(jobs), "companies": len(set(j.get("company", "") for j in jobs))}
     
     def _load(self, path: Path) -> dict:
+        """Load from TOON file, with JSON fallback for migration."""
         if path.exists():
             try:
-                return json.load(open(path))
+                return from_toon(path.read_text())
             except:
                 pass
+        
+        # Try JSON fallback (for migration)
+        json_path = path.with_suffix('.json')
+        if json_path.exists():
+            try:
+                data = json.load(open(json_path))
+                logger.info(f"📦 Migrating {json_path.name} to TOON format...")
+                return data
+            except:
+                pass
+        
         return {}
     
     def _save(self, path: Path, data: dict):
-        json.dump(data, open(path, "w"), indent=2, default=str)
+        """Save in TOON format."""
+        path.write_text(to_toon(data) + '\n')
 
 
 _cache: Optional[LocalCache] = None
