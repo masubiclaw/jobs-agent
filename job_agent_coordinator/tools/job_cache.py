@@ -149,11 +149,11 @@ class JobCache:
     
     def add_match(self, job_id: str, match_result: Dict[str, Any], profile_hash: str = "") -> bool:
         """
-        Store a job match analysis result.
+        Store a job match analysis result (supports two-pass matching).
         
         Args:
             job_id: The job ID this match is for
-            match_result: The analysis result (score, skills, recommendations, toon_report)
+            match_result: The analysis result with keyword_score, llm_score, combined_score
             profile_hash: Hash of the user profile (for cache invalidation)
         
         Returns:
@@ -161,21 +161,35 @@ class JobCache:
         """
         match_key = f"{job_id}:{profile_hash}" if profile_hash else job_id
         
-        if match_key in self._matches:
-            logger.debug(f"Match already cached: {job_id[:12]}")
-            return False
+        # Allow update if we now have LLM score but didn't before
+        existing = self._matches.get(match_key)
+        if existing:
+            has_llm_now = match_result.get("llm_score") is not None
+            had_llm_before = existing.get("llm_score") is not None
+            if had_llm_before or not has_llm_now:
+                logger.debug(f"Match already cached: {job_id[:12]}")
+                return False
         
         self._matches[match_key] = {
             "job_id": job_id,
             "profile_hash": profile_hash,
-            "match_score": match_result.get("match_score", 0),
+            # Two-pass scores
+            "keyword_score": match_result.get("keyword_score", match_result.get("match_score", 0)),
+            "llm_score": match_result.get("llm_score"),
+            "combined_score": match_result.get("combined_score", match_result.get("match_score", 0)),
+            # Legacy field for backwards compatibility
+            "match_score": match_result.get("combined_score", match_result.get("match_score", 0)),
             "match_level": match_result.get("match_level", "unknown"),
             "toon_report": match_result.get("toon_report", ""),
             "cached_at": datetime.now().isoformat(),
         }
         
         self._save_matches()
-        logger.info(f"🎯 Cached match: job={job_id[:12]} score={match_result.get('match_score', 0)}%")
+        kw = match_result.get("keyword_score", match_result.get("match_score", 0))
+        llm = match_result.get("llm_score")
+        combined = match_result.get("combined_score", kw)
+        llm_str = f" llm={llm}%" if llm is not None else ""
+        logger.info(f"🎯 Cached match: job={job_id[:12]} kw={kw}%{llm_str} combined={combined}%")
         return True
     
     def get_match(self, job_id: str, profile_hash: str = "") -> Optional[Dict[str, Any]]:

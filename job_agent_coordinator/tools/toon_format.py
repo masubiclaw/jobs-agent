@@ -88,20 +88,19 @@ def from_toon(text: str) -> Dict[str, Any]:
         return {}
     
     result = {}
-    current_section = None
-    current_list = None
-    current_list_key = None
-    section_stack = [result]
-    
     lines = text.strip().split('\n')
-    i = 0
     
-    while i < len(lines):
-        line = lines[i]
+    # Track current context
+    current_section_name = None
+    current_section = result
+    current_list = None
+    current_list_item = None
+    
+    for line in lines:
         stripped = line.strip()
+        indent = len(line) - len(line.lstrip())
         
         if not stripped:
-            i += 1
             continue
         
         # Section header: [section_name] or [0], [1], etc.
@@ -113,20 +112,20 @@ def from_toon(text: str) -> Dict[str, Any]:
             if section_name.isdigit():
                 idx = int(section_name)
                 if current_list is not None:
-                    new_dict = {}
+                    new_item = {}
                     while len(current_list) <= idx:
                         current_list.append({})
-                    current_list[idx] = new_dict
-                    section_stack = [result, new_dict]
+                    current_list[idx] = new_item
+                    current_list_item = new_item
             else:
-                # Named section - create nested dict or list
-                parent = section_stack[0] if len(section_stack) == 1 else section_stack[-1]
-                if section_name not in parent:
-                    parent[section_name] = {}
-                section_stack = [result, parent[section_name]]
-                current_section = section_name
-            
-            i += 1
+                # Named section - check if it will contain list items
+                # Look ahead to see if next content is [0]
+                current_section_name = section_name
+                current_list = None
+                current_list_item = None
+                # Create empty section - will be filled later
+                result[section_name] = {}
+                current_section = result[section_name]
             continue
         
         # Key-value pair: key: value
@@ -135,26 +134,127 @@ def from_toon(text: str) -> Dict[str, Any]:
             key, value = kv_match.groups()
             parsed_value = _parse_value(value)
             
-            target = section_stack[-1] if len(section_stack) > 0 else result
-            if isinstance(target, dict):
-                target[key] = parsed_value
-            
-            i += 1
+            # Determine target based on indentation
+            if indent >= 4 and current_list_item is not None:
+                # Inside a list item
+                current_list_item[key] = parsed_value
+            elif indent >= 2 and current_section is not None and current_section != result:
+                # Inside a section
+                current_section[key] = parsed_value
+            else:
+                # Top level
+                result[key] = parsed_value
+                # If we hit top-level, reset section context
+                if indent == 0:
+                    current_section = result
+                    current_list = None
+                    current_list_item = None
             continue
         
         # List item: - value
         if stripped.startswith('- '):
             value = stripped[2:]
-            target = section_stack[-1] if len(section_stack) > 0 else result
-            if isinstance(target, list):
-                target.append(_parse_value(value))
-            
-            i += 1
+            if current_list is not None:
+                current_list.append(_parse_value(value))
+            continue
+    
+    # Post-process: convert sections with only numeric keys to lists
+    def convert_numeric_dicts(obj):
+        if isinstance(obj, dict):
+            # Check if all keys are numeric strings
+            keys = list(obj.keys())
+            if keys and all(k.isdigit() for k in keys):
+                # Convert to list
+                max_idx = max(int(k) for k in keys)
+                result_list = [None] * (max_idx + 1)
+                for k, v in obj.items():
+                    result_list[int(k)] = convert_numeric_dicts(v)
+                return result_list
+            else:
+                return {k: convert_numeric_dicts(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [convert_numeric_dicts(item) for item in obj]
+        return obj
+    
+    # Second pass: properly parse nested structures
+    # Re-parse with better structure detection
+    result2 = {}
+    current_path = []
+    current_list_name = None
+    current_list_data = []
+    current_item = {}
+    
+    for line in lines:
+        stripped = line.strip()
+        indent = len(line) - len(line.lstrip())
+        
+        if not stripped:
             continue
         
-        i += 1
+        section_match = re.match(r'^\[(\w+|\d+)\]$', stripped)
+        if section_match:
+            section_name = section_match.group(1)
+            
+            if section_name.isdigit():
+                # Save previous item if exists
+                if current_item and current_list_name:
+                    current_list_data.append(current_item)
+                current_item = {}
+            else:
+                # New named section
+                # Save any pending list
+                if current_list_name and current_list_data:
+                    if current_item:
+                        current_list_data.append(current_item)
+                    result2[current_list_name] = current_list_data
+                    current_list_data = []
+                    current_item = {}
+                current_list_name = section_name
+            continue
+        
+        kv_match = re.match(r'^(\w+):\s*(.*)$', stripped)
+        if kv_match:
+            key, value = kv_match.groups()
+            parsed_value = _parse_value(value)
+            
+            if indent >= 4 and current_list_name:
+                # Inside a list item
+                current_item[key] = parsed_value
+            elif indent >= 2 and current_list_name:
+                # Could be a simple section value
+                if not current_item and not current_list_data:
+                    # It's a simple dict section
+                    if current_list_name not in result2:
+                        result2[current_list_name] = {}
+                    if isinstance(result2[current_list_name], dict):
+                        result2[current_list_name][key] = parsed_value
+                else:
+                    current_item[key] = parsed_value
+            else:
+                # Top level
+                # Save any pending list first
+                if current_list_name:
+                    if current_item:
+                        current_list_data.append(current_item)
+                    if current_list_data:
+                        result2[current_list_name] = current_list_data
+                    elif current_list_name in result2 and isinstance(result2[current_list_name], dict):
+                        pass  # Keep dict
+                    current_list_name = None
+                    current_list_data = []
+                    current_item = {}
+                result2[key] = parsed_value
     
-    return result
+    # Save final pending data
+    if current_list_name:
+        if current_item:
+            current_list_data.append(current_item)
+        if current_list_data:
+            result2[current_list_name] = current_list_data
+        elif current_list_name in result2:
+            pass  # Keep existing
+    
+    return result2
 
 
 def _parse_value(value: str) -> Any:
@@ -290,13 +390,19 @@ def jobs_from_toon(text: str) -> Dict[str, Dict]:
 
 
 def matches_to_toon(matches: Dict[str, Dict]) -> str:
-    """Convert matches dictionary to TOON format."""
+    """Convert matches dictionary to TOON format (supports two-pass scores)."""
     lines = ["[matches]", f"count: {len(matches)}", ""]
     
     for match_key, match in matches.items():
         lines.append(f"[{match_key}]")
         lines.append(f"  job_id: {match.get('job_id', '')}")
         lines.append(f"  profile_hash: {match.get('profile_hash', '')}")
+        # Two-pass scores
+        lines.append(f"  keyword_score: {match.get('keyword_score', match.get('match_score', 0))}")
+        llm_score = match.get('llm_score')
+        lines.append(f"  llm_score: {llm_score if llm_score is not None else 'null'}")
+        lines.append(f"  combined_score: {match.get('combined_score', match.get('match_score', 0))}")
+        # Legacy field
         lines.append(f"  match_score: {match.get('match_score', 0)}")
         lines.append(f"  match_level: {match.get('match_level', '')}")
         lines.append(f"  cached_at: {match.get('cached_at', '')}")
@@ -309,7 +415,7 @@ def matches_to_toon(matches: Dict[str, Dict]) -> str:
 
 
 def matches_from_toon(text: str) -> Dict[str, Dict]:
-    """Parse matches from TOON format."""
+    """Parse matches from TOON format (supports two-pass scores)."""
     matches = {}
     current_key = None
     current_match = {}
@@ -338,8 +444,11 @@ def matches_from_toon(text: str) -> Dict[str, Dict]:
             key = key.strip()
             value = value.strip()
             
-            if key == 'match_score':
-                current_match[key] = int(value) if value else 0
+            # Integer score fields
+            if key in ('match_score', 'keyword_score', 'combined_score'):
+                current_match[key] = int(value) if value and value != 'null' else 0
+            elif key == 'llm_score':
+                current_match[key] = int(value) if value and value != 'null' else None
             elif key == 'toon_report':
                 current_match[key] = value.replace('\\n', '\n')
             elif key in ('job_id', 'profile_hash', 'match_level', 'cached_at'):

@@ -52,6 +52,93 @@ except ImportError:
     PLAYWRIGHT_AVAILABLE = False
     logger.warning("Playwright not installed. JS-rendered sites won't work. pip install playwright && playwright install chromium")
 
+# Checkpoint directory
+CHECKPOINT_DIR = Path(__file__).parent.parent.parent / ".job_cache"
+
+
+class ScrapingProgress:
+    """Manages checkpoint/resume for batch scraping jobs."""
+    
+    def __init__(self, checkpoint_file: Path = None):
+        self.checkpoint_file = checkpoint_file or CHECKPOINT_DIR / "scraping_progress.json"
+        self.checkpoint_file.parent.mkdir(parents=True, exist_ok=True)
+        self._progress = self._load()
+    
+    def _load(self) -> Dict[str, Any]:
+        if self.checkpoint_file.exists():
+            try:
+                import json
+                return json.loads(self.checkpoint_file.read_text())
+            except:
+                pass
+        return {"completed": {}, "status": "idle"}
+    
+    def _save(self):
+        import json
+        self.checkpoint_file.write_text(json.dumps(self._progress, indent=2))
+    
+    def start(self, total_sources: int, categories: str = ""):
+        """Start a new scraping session."""
+        self._progress = {
+            "total_sources": total_sources,
+            "categories": categories,
+            "completed": {},
+            "started_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+            "status": "in_progress",
+            "jobs_found": 0,
+            "jobs_cached": 0,
+        }
+        self._save()
+    
+    def mark_complete(self, source_name: str, url: str, jobs_found: int, jobs_cached: int, success: bool = True, error: str = ""):
+        """Mark a source as completed."""
+        self._progress["completed"][source_name] = {
+            "url": url,
+            "jobs_found": jobs_found,
+            "jobs_cached": jobs_cached,
+            "success": success,
+            "error": error,
+            "completed_at": datetime.now().isoformat(),
+        }
+        self._progress["jobs_found"] = sum(s.get("jobs_found", 0) for s in self._progress["completed"].values())
+        self._progress["jobs_cached"] = sum(s.get("jobs_cached", 0) for s in self._progress["completed"].values())
+        self._progress["updated_at"] = datetime.now().isoformat()
+        self._save()
+    
+    def is_completed(self, source_name: str) -> bool:
+        """Check if source was already processed."""
+        return source_name in self._progress.get("completed", {})
+    
+    def get_completed_count(self) -> int:
+        return len(self._progress.get("completed", {}))
+    
+    def get_completed_sources(self) -> Dict[str, Any]:
+        return self._progress.get("completed", {})
+    
+    def finish(self):
+        """Mark session as complete."""
+        self._progress["status"] = "complete"
+        self._progress["finished_at"] = datetime.now().isoformat()
+        self._save()
+    
+    def clear(self):
+        """Clear checkpoint to start fresh."""
+        self._progress = {"completed": {}, "status": "idle"}
+        if self.checkpoint_file.exists():
+            self.checkpoint_file.unlink()
+    
+    def get_summary(self) -> Dict[str, Any]:
+        return {
+            "status": self._progress.get("status", "idle"),
+            "total_sources": self._progress.get("total_sources", 0),
+            "completed": self.get_completed_count(),
+            "jobs_found": self._progress.get("jobs_found", 0),
+            "jobs_cached": self._progress.get("jobs_cached", 0),
+            "started_at": self._progress.get("started_at"),
+            "updated_at": self._progress.get("updated_at"),
+        }
+
 
 def parse_markdown_links(file_path: str = None) -> List[Dict[str, str]]:
     """Parse markdown file and extract all links with their categories."""
@@ -797,7 +884,9 @@ def scrape_job_links(
     use_llm_dedup: bool = False,  # Disabled by default (slower)
     follow_pagination: bool = True,  # Follow pagination links
     max_pages_per_source: int = 3,  # Max pages to scrape per source
-    delay_seconds: float = SCRAPE_DELAY
+    delay_seconds: float = SCRAPE_DELAY,
+    resume: bool = False,  # Resume from checkpoint
+    on_progress: callable = None,  # Progress callback(completed, total, source_result)
 ) -> Dict[str, Any]:
     """
     Scrape job openings from all links in a markdown file.
@@ -808,6 +897,11 @@ def scrape_job_links(
     - Uses LLM for extraction (tokens consumed per source)
     - Consider using get_links_summary first to see available sources
     
+    Supports checkpointing:
+    - Use resume=True to continue from last checkpoint
+    - Progress saved after each source
+    - Interrupted scrapes can be resumed
+    
     Args:
         file_path: Path to markdown file with job links
         categories: Comma-separated categories to scrape (empty = all). Use this to limit scope!
@@ -817,11 +911,14 @@ def scrape_job_links(
         follow_pagination: Follow pagination links to get more jobs
         max_pages_per_source: Max pages to scrape per source
         delay_seconds: Delay between requests
+        resume: Resume from last checkpoint (skip already-scraped sources)
+        on_progress: Callback function(completed, total, source_result) for progress updates
     
     Returns:
         Dict with scraping results and statistics
     """
     start_time = time.time()
+    progress = ScrapingProgress()
     
     all_links = parse_markdown_links(file_path)
     if not all_links:
@@ -836,7 +933,23 @@ def scrape_job_links(
     if max_sources > 0:
         all_links = all_links[:max_sources]
     
+    # Handle resume
+    skipped_count = 0
+    if resume:
+        completed_sources = progress.get_completed_sources()
+        skipped_count = sum(1 for link in all_links if link["name"] in completed_sources)
+        if skipped_count > 0:
+            logger.info(f"📥 Resuming: skipping {skipped_count} already-completed sources")
+    else:
+        # Start fresh
+        progress.clear()
+    
+    # Initialize progress tracking
+    progress.start(len(all_links), categories)
+    
     logger.info(f"🚀 Starting scrape of {len(all_links)} sources (pagination={'on' if follow_pagination else 'off'})")
+    if resume and skipped_count > 0:
+        logger.info(f"   ⏭️  Resuming: {skipped_count} sources already done, {len(all_links) - skipped_count} remaining")
     logger.info("=" * 60)
     
     all_jobs = []
@@ -845,9 +958,32 @@ def scrape_job_links(
     failed_sources = []
     total_added = 0
     total_duplicates = 0
+    completed = 0
     
     for i, link in enumerate(all_links):
+        # Check if already completed (resume mode)
+        if resume and progress.is_completed(link["name"]):
+            # Include stats from previous run
+            prev = progress.get_completed_sources().get(link["name"], {})
+            if prev.get("success"):
+                successful_sources.append({
+                    "name": link["name"],
+                    "category": link["category"],
+                    "jobs_found": prev.get("jobs_found", 0),
+                    "resumed": True
+                })
+                total_added += prev.get("jobs_cached", 0)
+            else:
+                failed_sources.append({"name": link["name"], "reason": prev.get("error", "Previous failure"), "resumed": True})
+            completed += 1
+            continue
+        
         logger.info(f"\n[{i+1}/{len(all_links)}] 📡 {link['name']} ({link['category']})")
+        
+        source_jobs_found = 0
+        source_jobs_cached = 0
+        source_success = False
+        source_error = ""
         
         # Use pagination if enabled
         if follow_pagination:
@@ -862,6 +998,8 @@ def scrape_job_links(
             
             if jobs:
                 all_jobs.extend(jobs)
+                source_jobs_found = len(jobs)
+                source_success = True
                 successful_sources.append({
                     "name": link["name"],
                     "category": link["category"],
@@ -871,17 +1009,42 @@ def scrape_job_links(
                 # Cache with deduplication
                 if cache_results:
                     result = cache_jobs_with_dedup(jobs, use_llm_dedup=use_llm_dedup)
+                    source_jobs_cached = result["added"]
                     total_added += result["added"]
                     total_duplicates += result["duplicates"]
                     logger.info(f"   💾 Cached: {result['added']} new, {result['duplicates']} duplicates")
             else:
+                source_error = "No jobs extracted"
                 failed_sources.append({"name": link["name"], "reason": "No jobs extracted"})
         else:
+            source_error = "Scrape failed"
             failed_sources.append({"name": link["name"], "reason": "Scrape failed"})
+        
+        # Save checkpoint
+        progress.mark_complete(
+            source_name=link["name"],
+            url=link["url"],
+            jobs_found=source_jobs_found,
+            jobs_cached=source_jobs_cached,
+            success=source_success,
+            error=source_error
+        )
+        completed += 1
+        
+        # Progress callback
+        if on_progress:
+            on_progress(completed, len(all_links), {
+                "name": link["name"],
+                "jobs_found": source_jobs_found,
+                "jobs_cached": source_jobs_cached,
+                "success": source_success,
+            })
         
         if i < len(all_links) - 1:
             time.sleep(delay_seconds)
     
+    # Mark complete
+    progress.finish()
     elapsed = time.time() - start_time
     
     # Generate summary
@@ -901,6 +1064,7 @@ def scrape_job_links(
         "sources_failed": len(failed_sources),
         "job_detail_urls": len(all_job_urls),  # Count of individual job URLs found
         "elapsed_seconds": round(elapsed, 1),
+        "resumed_sources": skipped_count,
         "summary": summary,
         "toon_report": toon_report,
         "successful_sources": successful_sources,

@@ -1,6 +1,67 @@
 # Job Search Agent
 
-A multi-agent job search and matching system built with Google ADK. Features intelligent job searching, profile matching, web scraping, and local caching with vector search.
+A job search pipeline with two-pass matching (fast keyword + LLM holistic analysis).
+
+## Two Ways to Use
+
+| Method | Best For | How |
+|--------|----------|-----|
+| **CLI Scripts** | Batch processing, automation | `python scripts/run_job_matcher.py` |
+| **Chat Agent** | Interactive queries, exploration | `adk web` → http://localhost:8000 |
+
+Both methods use the same underlying tools and cache. You can mix and match!
+
+```
+┌─────────────────┐     ┌─────────────────┐
+│  CLI Scripts    │     │   Chat Agent    │
+│  (scripts/)     │     │   (adk web)     │
+└────────┬────────┘     └────────┬────────┘
+         │                       │
+         └───────────┬───────────┘
+                     ▼
+         ┌─────────────────────┐
+         │       Tools         │  ← Single source of truth
+         │  (tools/*.py)       │
+         └──────────┬──────────┘
+                    ▼
+         ┌─────────────────────┐
+         │   .job_cache/       │  ← Shared storage
+         │  jobs.toon          │
+         │  matches.toon       │
+         │  profiles/*.toon    │
+         └─────────────────────┘
+```
+
+## Pipeline Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         JOB SEARCH PIPELINE                              │
+│                    (CLI Scripts OR Chat Agent)                           │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  Step 1              Step 2              Step 3              Step 4      │
+│  ┌──────────┐        ┌──────────┐        ┌──────────┐        ┌────────┐ │
+│  │ Import   │        │ Get      │        │ Match    │        │ Query  │ │
+│  │ Profile  │───────▶│ Jobs     │───────▶│ Jobs     │───────▶│Results │ │
+│  │          │        │          │        │ (2-pass) │        │        │ │
+│  └──────────┘        └──────────┘        └──────────┘        └────────┘ │
+│       │                   │                   │                   │      │
+│  CLI: import_      CLI: run_jobspy_    CLI: run_job_       CLI: show_   │
+│       profile           search              matcher            cache_   │
+│       _from_pdf    OR run_job_         OR rebuild_all_     stats       │
+│                        scraper              matches                     │
+│       │                   │                   │                   │      │
+│  Chat: "create     Chat: "search       Chat: "analyze      Chat: "show  │
+│   profile for..."   ML jobs in..."      this job..."        matches"   │
+│       │                   │                   │                   │      │
+│       ▼                   ▼                   ▼                   ▼      │
+│  profiles/*.toon     jobs.toon          matches.toon         Answers    │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**Important:** Profile must be imported before running matches (matching uses your skills/preferences).
 
 ## Quick Start
 
@@ -26,285 +87,256 @@ OLLAMA_FAST_MODEL=gemma3:12b
 OLLAMA_BASE_URL=http://localhost:11434
 JOB_AGENT_LOG_LEVEL=INFO
 EOF
+```
 
-# Run the agent
+## Running the Pipeline
+
+### Step 1: Import Your Profile (Required First!)
+
+```bash
+# Import from PDF resume - extracts skills, experience, preferences
+python scripts/import_profile_from_pdf.py your_resume.pdf
+
+# Preview without saving
+python scripts/import_profile_from_pdf.py your_resume.pdf --dry-run
+```
+
+### Step 2: Get Jobs (Two Options)
+
+**Option A: Search Job Aggregators (JobSpy)**
+```bash
+# Search Indeed, LinkedIn, Glassdoor, ZipRecruiter
+python scripts/run_jobspy_search.py "software engineer" "Seattle, WA"
+python scripts/run_jobspy_search.py "ML engineer" "Remote" --results 50
+python scripts/run_jobspy_search.py "data scientist" "Bay Area" --exclude "Amazon,Meta"
+```
+
+**Option B: Scrape Company Career Pages**
+```bash
+# View available sources (from JobOpeningsLink.md)
+python scripts/run_job_scraper.py
+
+# Scrape specific company
+python scripts/run_job_scraper.py --source Boeing
+
+# Scrape all sources (10-20 minutes, supports checkpoint!)
+python scripts/run_job_scraper.py --all
+
+# Resume interrupted scrape
+python scripts/run_job_scraper.py --resume
+
+# Check scrape progress
+python scripts/run_job_scraper.py --status
+```
+
+**Note:** 600+ jobs pre-cached - you may not need to scrape/search.
+
+### Step 3: Match Jobs Against Profile
+
+```bash
+# Fast keyword matching (instant, ~0.01s/job)
+python scripts/run_job_matcher.py
+
+# Two-pass with LLM analysis (thorough, ~10s/job)
+python scripts/run_job_matcher.py --llm
+
+# Resume interrupted LLM matching
+python scripts/run_job_matcher.py --llm --resume
+
+# Rebuild all matches (after profile changes)
+python scripts/rebuild_all_matches.py --llm
+```
+
+### Step 4: Query Results
+
+**Option A: CLI**
+```bash
+python scripts/show_cache_stats.py --matches
+```
+
+**Option B: Chat Agent**
+```bash
 adk web
 # Open http://localhost:8000
 ```
 
-## Features
+The chat agent can do everything the scripts can:
+- "Search for ML engineer jobs in Seattle" → uses JobSpy
+- "Scrape Boeing jobs" → uses web scraper
+- "Analyze this job against my profile" → runs matching
+- "Show my top matches" → queries cache
+- "What skills am I missing for the Anthropic jobs?" → analyzes gaps
 
-- 🔍 **Job Search** - Search across Indeed, LinkedIn, Glassdoor, ZipRecruiter via JobSpy
-- 🎯 **Job Matching** - Analyze jobs against your profile with skill gap analysis (fetches job descriptions automatically)
-- 👤 **Profile Management** - Store skills, preferences, and job search criteria
-- 💾 **Smart Caching** - Local persistence with ChromaDB vector search (600+ jobs pre-cached)
-- 🕷️ **Web Scraping** - Scrape job boards with URL extraction for direct job links
-- 📊 **Match Aggregation** - Ranked summaries of all analyzed jobs in TOON format
+**Tip:** Use CLI scripts for batch operations (faster). Use chat for exploration and one-off queries.
 
-## Architecture
+## What Gets Cached
+
+All data stored in `.job_cache/` directory:
+
+| File | What's Cached | When Updated |
+|------|---------------|--------------|
+| `profiles/*.toon` | Your skills, experience, preferences | `import_profile_from_pdf.py` |
+| `jobs.toon` | Job listings (title, company, location, description, URL) | `run_job_scraper.py` |
+| `matches.toon` | Match scores (keyword_score, llm_score, combined_score) | `run_job_matcher.py` |
+| `matching_progress.json` | Checkpoint for resuming LLM matching | Auto-saved every 10 jobs |
+| `scraping_progress.json` | Checkpoint for resuming web scraping | Auto-saved per source |
+| `chroma/` | Vector embeddings for semantic search | Auto-updated |
+| `exclusions.toon` | Companies to exclude from matches | Via agent or manually |
+
+**Pre-cached:** 600+ jobs from tech companies, aerospace, government contractors.
+
+## Two-Pass Matching
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    job_agent_coordinator                         │
-│                     (Main Orchestrator)                          │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  ┌──────────────────┐                                           │
-│  │ job_searcher     │  ← Agent (uses LLM for search planning)   │
-│  │ - JobSpy search  │                                           │
-│  │ - Multi-platform │                                           │
-│  └────────┬─────────┘                                           │
-│           │                                                      │
-│  ┌────────┴─────────────────────────────────────────────┐       │
-│  │                      Tools                            │       │
-│  │  • analyze_job_match  (fast, algorithmic matching)   │       │
-│  │  • JobSpy search      • Profile Store                │       │
-│  │  • Job Cache          • Job Links Scraper            │       │
-│  │  • Match Aggregation  • Prompt Parser                │       │
-│  └───────────────────────────────────────────────────────┘       │
-│                          │                                       │
-│  ┌───────────────────────┴───────────────────┐                  │
-│  │              Local Storage                 │                  │
-│  │  .job_cache/                               │                  │
-│  │  ├── jobs.json      (664+ job listings)   │                  │
-│  │  ├── matches.json   (cached match results)│                  │
-│  │  ├── profiles.json  (user profiles)       │                  │
-│  │  ├── exclusions.json                      │                  │
-│  │  └── chroma/        (vector embeddings)   │                  │
-│  └───────────────────────────────────────────┘                  │
-└─────────────────────────────────────────────────────────────────┘
+Pass 1 (Keyword)          Pass 2 (LLM)              Combined
+~0.01s/job                ~10s/job                  
+                                                    
+┌─────────────────┐       ┌─────────────────┐       ┌─────────────────┐
+│ • Skill match   │       │ • Context       │       │ 40% keyword     │
+│ • Role match    │  ───▶ │ • Experience    │  ───▶ │ 60% LLM         │
+│ • Location      │       │ • Culture fit   │       │ = final score   │
+└─────────────────┘       └─────────────────┘       └─────────────────┘
 ```
 
-**Note:** Job matching is a direct tool (not an agent) for speed - it processes 664 jobs in ~1 second!
+- **Keyword-only:** Fast, good for initial filtering
+- **With LLM:** Thorough, better for final candidates
 
 ## Prerequisites
 
 - Python 3.11+
-- [Ollama](https://ollama.ai/) (recommended for local LLM)
-- Or Google AI API key for Gemini
+- [Ollama](https://ollama.ai/) with `gemma3:27b` and `gemma3:12b` models
 
 ## Setup
 
-### 1. Clone the repository
+### 1. Clone and create environment
 
 ```bash
 git clone https://github.com/masubi/jobs-agent.git
 cd jobs-agent
-```
-
-### 2. Create virtual environment
-
-```bash
 python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+source .venv/bin/activate
 ```
 
-### 3. Install dependencies
+### 2. Install dependencies
 
 ```bash
-# Using pip
 pip install -r requirements.txt
-
-# Or using uv (faster)
-uv pip install -r requirements.txt
-```
-
-### 4. Install Playwright (for JS-rendered job sites)
-
-```bash
 playwright install chromium
 ```
 
-### 5. Set up Ollama (recommended)
+### 3. Set up Ollama
 
 ```bash
-# Install Ollama from https://ollama.ai/
-
-# Pull recommended models
-ollama pull gemma3:27b     # Main model (better quality)
-ollama pull gemma3:12b     # Fast model (for extraction)
-
-# Verify Ollama is running
-curl http://localhost:11434/api/tags
+# Install from https://ollama.ai/
+ollama pull gemma3:27b
+ollama pull gemma3:12b
+curl http://localhost:11434/api/tags  # Verify running
 ```
 
-### 6. Configure environment
-
-Create a `.env` file:
+### 4. Configure environment
 
 ```bash
-# LLM Configuration
+cat > .env << 'EOF'
 LLM_PROVIDER=ollama
 LLM_MODEL=ollama/gemma3:27b
 OLLAMA_MODEL=gemma3:27b
 OLLAMA_FAST_MODEL=gemma3:12b
 OLLAMA_BASE_URL=http://localhost:11434
-
-# Optional: Use Google AI instead
-# LLM_PROVIDER=google
-# LLM_MODEL=gemini-2.0-flash
-# GOOGLE_API_KEY=your_api_key_here
-
-# Logging
 JOB_AGENT_LOG_LEVEL=INFO
-VERBOSE_MODEL_LOGGING=false
-
-# Optional: Pre-seed initial prompt
-INITIAL_PROMPT="search seattle for software engineering jobs"
+EOF
 ```
 
-## Running the Agent
-
-### Web UI (Interactive)
-```bash
-# Start the web UI
-adk web
-
-# Open http://localhost:8000 in your browser
-```
-
-### CLI Scripts (Batch Operations)
+## CLI Script Reference
 
 ```bash
-# Show job cache statistics
-python scripts/show_cache_stats.py
-python scripts/show_cache_stats.py --matches    # Include match stats
+# Profile
+python scripts/import_profile_from_pdf.py resume.pdf    # Import profile
+python scripts/import_profile_from_pdf.py resume.pdf --dry-run
 
-# Run job matching on all cached jobs
-python scripts/run_job_matcher.py               # Match all jobs (uses cache)
-python scripts/run_job_matcher.py --limit 50    # Match first 50 jobs
-python scripts/run_job_matcher.py --min-score 60  # Show only 60%+ matches
-python scripts/run_job_matcher.py -v            # Verbose output
+# JobSpy Search (Indeed, LinkedIn, Glassdoor, ZipRecruiter)
+python scripts/run_jobspy_search.py "engineer" "Seattle"           # Basic search
+python scripts/run_jobspy_search.py "ML engineer" "Remote" -n 50   # 50 results
+python scripts/run_jobspy_search.py "manager" "NYC" --sites indeed,glassdoor
+python scripts/run_jobspy_search.py "dev" "SF" --exclude "Amazon,Meta"
 
-# Rebuild ALL matches from scratch (when profile changes)
-python scripts/rebuild_all_matches.py           # Rebuild all matches
-python scripts/rebuild_all_matches.py --fetch   # Fetch job descriptions from URLs (slower but more accurate)
-python scripts/rebuild_all_matches.py --limit 100  # Rebuild first 100 only
+# Web Scraping (company career pages from JobOpeningsLink.md)
+python scripts/run_job_scraper.py                       # List sources
+python scripts/run_job_scraper.py --source Boeing       # Single source
+python scripts/run_job_scraper.py --all                 # All sources
+python scripts/run_job_scraper.py --resume              # Resume interrupted
+python scripts/run_job_scraper.py --status              # Check progress
 
-# Run job scraper
-python scripts/run_job_scraper.py               # Show available sources
-python scripts/run_job_scraper.py --source Boeing  # Scrape single source
-python scripts/run_job_scraper.py --category Aerospace  # Scrape category
-python scripts/run_job_scraper.py --all         # Scrape ALL (10-20 min!)
-```
+# Matching
+python scripts/run_job_matcher.py                       # Keyword only
+python scripts/run_job_matcher.py --llm                 # With LLM
+python scripts/run_job_matcher.py --llm --resume        # Resume
+python scripts/run_job_matcher.py --limit 50            # Limit jobs
 
-## Example Commands
+# Rebuild (clears matches first)
+python scripts/rebuild_all_matches.py                   # Keyword only
+python scripts/rebuild_all_matches.py --llm             # With LLM
+python scripts/rebuild_all_matches.py --llm --resume    # Resume
 
-### Job Search
-```
-"Find software engineer jobs in Seattle"
-"Search for data scientist positions in San Francisco"
-"Look for remote Python developer jobs"
-"Find ML Engineer jobs excluding Amazon"
-```
-
-### Profile Management
-```
-"Create profile for John"
-"Add skill: Python (advanced)"
-"Add skill: Machine Learning (intermediate)"
-"Set preferences: ML Engineer, $180k+, Seattle, remote preferred"
-"Show my profile"
-```
-
-### Job Matching
-```
-"Analyze this job: [paste job description]"
-"Does this job match my profile?"
-"Match score for Senior Engineer at Google"
-```
-
-### Cache & Aggregation
-```
-"Show cache stats"
-"Find ML jobs in cache"
-"Summarize my matches"
-"Show best matches (score > 70)"
-"List all matches"
-```
-
-### Web Scraping (use sparingly - slow!)
-```
-"Show job sources"                    # Fast - lists available sources
-"Scrape Boeing jobs"                  # ~30 seconds
-"Scrape Aerospace category"           # ~3 minutes
+# Stats
+python scripts/show_cache_stats.py                      # Job stats
+python scripts/show_cache_stats.py --matches            # Include matches
 ```
 
 ## Project Structure
 
 ```
 jobs-agent/
-├── job_agent_coordinator/
-│   ├── __init__.py
-│   ├── agent.py                    # Main coordinator agent
-│   ├── prompt.py                   # Coordinator instructions
-│   ├── sub_agents/
-│   │   ├── job_searcher/           # JobSpy search agent
-│   │   │   ├── agent.py
-│   │   │   └── prompt.py
-│   │   └── job_matcher/            # Job matching tool (algorithmic)
-│   │       └── agent.py            # analyze_job_match function
-│   └── tools/
-│       ├── jobspy_tools.py         # JobSpy integration
-│       ├── job_cache.py            # Job + match caching
-│       ├── local_cache.py          # Exclusions cache
-│       ├── profile_store.py        # User profiles
-│       ├── job_links_scraper.py    # Web scraper
-│       └── prompt_to_search_params.py
-├── scripts/
-│   ├── run_job_matcher.py          # Batch job matching
-│   ├── rebuild_all_matches.py      # Rebuild matches from scratch
-│   ├── run_job_scraper.py          # Batch job scraping
-│   └── show_cache_stats.py         # Cache statistics
-├── tests/
-│   ├── test_jobspy.py
-│   └── test_job_scraper.py
-├── JobOpeningsLink.md              # Curated job board URLs
-├── .env                            # Environment config
-├── pyproject.toml
-├── requirements.txt
-└── README.md
+├── scripts/                          # CLI pipeline scripts
+│   ├── import_profile_from_pdf.py    # Step 1: Import profile
+│   ├── run_jobspy_search.py          # Step 2a: Search aggregators
+│   ├── run_job_scraper.py            # Step 2b: Scrape career pages
+│   ├── run_job_matcher.py            # Step 3: Match jobs
+│   ├── rebuild_all_matches.py        # Rebuild matches
+│   └── show_cache_stats.py           # View cache stats
+├── job_agent_coordinator/            # Agent code
+│   ├── agent.py                      # Chat agent (queries cache)
+│   ├── sub_agents/job_matcher/       # Two-pass matching logic
+│   └── tools/                        # Scraping, caching tools
+├── .job_cache/                       # Cached data (gitignored)
+│   ├── profiles/*.toon               # User profiles
+│   ├── jobs.toon                     # Job listings
+│   ├── matches.toon                  # Match results
+│   └── chroma/                       # Vector embeddings
+├── JobOpeningsLink.md                # Job source URLs
+└── tests/                            # Unit tests
 ```
-
-## Data Storage
-
-All data is stored locally in `.job_cache/`:
-
-| File | Purpose |
-|------|---------|
-| `jobs.json` | Cached job listings (~600+) |
-| `matches.json` | Job match analysis results |
-| `profiles.json` | User profiles |
-| `exclusions.json` | Excluded companies list |
-| `chroma/` | Vector embeddings for semantic search |
-
-## Tips
-
-1. **Use cache first** - The agent caches 600+ jobs. Check cache before scraping!
-2. **Create a profile** - Matching works best with a complete profile
-3. **Be specific** - Include location, role type, and any exclusions
-4. **Scrape selectively** - Full scrape takes 10-20 minutes; use single source scraping
 
 ## Troubleshooting
 
-### Ollama connection issues
+### Profile not imported
 ```bash
-# Check if Ollama is running
-curl http://localhost:11434/api/tags
-
-# Restart Ollama
-ollama serve
+# Matching requires a profile - import first
+python scripts/import_profile_from_pdf.py your_resume.pdf
 ```
 
-### Missing dependencies
+### Ollama not running
 ```bash
-pip install chromadb python-jobspy playwright
-playwright install chromium
+curl http://localhost:11434/api/tags  # Check status
+ollama serve                          # Start server
 ```
 
-### Permission errors with .env
+### LLM matching interrupted
 ```bash
-chmod 644 .env
+# Resume from checkpoint (progress saved every 10 jobs)
+python scripts/run_job_matcher.py --llm --resume
+```
+
+### Matches seem wrong after profile change
+```bash
+# Rebuild all matches with new profile
+python scripts/rebuild_all_matches.py --llm
+```
+
+## Running Tests
+
+```bash
+pytest tests/ -v
+pytest tests/test_job_matcher.py -v
 ```
 
 ## License

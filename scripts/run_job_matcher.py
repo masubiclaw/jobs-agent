@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 """
-Run job matching on all cached jobs.
+Run two-pass job matching on cached jobs.
+
+Pass 1 (fast): Keyword/regex analysis (~0.01s/job)
+Pass 2 (slow): LLM holistic analysis (~3-5s/job)
+
+Supports checkpoint/resume for long-running LLM passes.
 
 Usage:
-    python scripts/run_job_matcher.py              # Match all jobs
-    python scripts/run_job_matcher.py --limit 10   # Match first 10 jobs
-    python scripts/run_job_matcher.py --min-score 60  # Show only 60%+ matches
+    python scripts/run_job_matcher.py              # Keyword-only (fast)
+    python scripts/run_job_matcher.py --llm        # Two-pass with LLM (slow)
+    python scripts/run_job_matcher.py --resume     # Resume interrupted LLM pass
+    python scripts/run_job_matcher.py --limit 50   # Process first 50 jobs
 """
 
 import argparse
@@ -16,120 +22,176 @@ from pathlib import Path
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from job_agent_coordinator.sub_agents.job_matcher.agent import analyze_job_match
+from job_agent_coordinator.sub_agents.job_matcher.agent import (
+    analyze_job_match,
+    batch_match,
+    MatchingProgress,
+)
 from job_agent_coordinator.tools.job_cache import get_cache
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run job matching on cached jobs")
-    parser.add_argument("--limit", type=int, default=0, help="Limit number of jobs to process (0=all)")
+    parser = argparse.ArgumentParser(
+        description="Run two-pass job matching on cached jobs",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Fast keyword-only matching
+  python scripts/run_job_matcher.py
+  
+  # Two-pass with LLM analysis (slow but thorough)
+  python scripts/run_job_matcher.py --llm
+  
+  # Resume interrupted LLM pass
+  python scripts/run_job_matcher.py --llm --resume
+  
+  # Process specific number of jobs
+  python scripts/run_job_matcher.py --limit 100 --llm
+"""
+    )
+    parser.add_argument("--limit", type=int, default=0, help="Limit number of jobs (0=all)")
     parser.add_argument("--min-score", type=int, default=0, help="Only show matches with score >= this")
-    parser.add_argument("--verbose", "-v", action="store_true", help="Show progress for each job")
-    parser.add_argument("--skip-cached", action="store_true", help="Skip jobs already matched")
-    parser.add_argument("--fetch-descriptions", action="store_true", help="Fetch job descriptions from URLs if missing")
-    parser.add_argument("--no-fetch", action="store_true", help="Disable fetching descriptions (faster but less accurate)")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Show each job as processed")
+    parser.add_argument("--llm", action="store_true", help="Run Pass 2 LLM analysis (slower, ~3-5s/job)")
+    parser.add_argument("--resume", action="store_true", help="Resume from checkpoint (requires --llm)")
+    parser.add_argument("--clear-progress", action="store_true", help="Clear checkpoint and start fresh")
+    parser.add_argument("--fetch", action="store_true", help="Fetch missing job descriptions from URLs")
+    parser.add_argument("--no-cache", action="store_true", help="Don't use cached results")
     args = parser.parse_args()
-    
-    # Default: fetch descriptions if not already cached
-    fetch_desc = not args.no_fetch
 
     cache = get_cache()
     limit = args.limit if args.limit > 0 else 10000
     jobs = cache.list_all(limit=limit)
 
+    # Check progress if resuming
+    progress = MatchingProgress()
+    if args.clear_progress:
+        progress.clear()
+        print("🗑️ Cleared checkpoint progress")
+
+    if args.resume and not args.llm:
+        print("⚠️ --resume only works with --llm flag")
+        return
+
     print("=" * 70)
-    print(f"BATCH JOB MATCHING - {len(jobs)} jobs")
-    print(f"  Fetch descriptions: {'yes (slower but more accurate)' if fetch_desc else 'no (faster)'}")
+    print(f"TWO-PASS JOB MATCHING")
+    print(f"  Jobs: {len(jobs)}")
+    print(f"  Pass 1 (keyword): always")
+    print(f"  Pass 2 (LLM): {'yes (~3-5s/job)' if args.llm else 'no (use --llm to enable)'}")
+    if args.resume:
+        summary = progress.get_summary()
+        print(f"  Resume: from checkpoint ({summary.get('completed', 0)} already done)")
     print("=" * 70)
+    print()
 
     results = {"strong": [], "good": [], "partial": [], "weak": [], "excluded": [], "error": []}
     start_time = time.time()
-    skipped = 0
 
-    for i, job in enumerate(jobs):
-        try:
-            # Check if already cached
-            if args.skip_cached:
-                existing = cache.get_match(job.get("id", ""))
-                if existing:
-                    skipped += 1
-                    continue
+    def on_progress(completed, total, result):
+        if args.verbose:
+            kw = result.get("keyword_score", 0)
+            llm = result.get("llm_score")
+            combined = result.get("combined_score", kw)
+            llm_str = f" llm={llm}%" if llm is not None else ""
+            title = result.get("job_id", "unknown")[:12]
+            print(f"  [{completed}/{total}] kw={kw}%{llm_str} combined={combined}% - {title}")
 
-            result = analyze_job_match(
-                job_title=job["title"],
-                company=job["company"],
-                job_description=job.get("description", ""),
-                location=job.get("location", ""),
-                salary_info=str(job.get("salary", "")),
-                job_url=job.get("url", ""),
-                job_id=job.get("id", ""),  # Pass cached job ID for consistency
-                fetch_description=fetch_desc,  # Fetch description if missing and URL exists
-            )
+    if args.llm:
+        # Use batch_match for checkpoint support
+        batch_result = batch_match(
+            jobs=jobs,
+            run_llm=True,
+            resume=args.resume,
+            batch_size=10,
+            on_progress=on_progress if args.verbose else None,
+        )
+        
+        results["strong"] = batch_result["results"]["strong"]
+        results["good"] = batch_result["results"]["good"]
+        results["partial"] = batch_result["results"]["partial"]
+        results["weak"] = batch_result["results"]["weak"]
+        results["excluded"] = batch_result["results"]["excluded"]
+        results["error"] = batch_result["results"]["error"]
+    else:
+        # Simple loop for keyword-only
+        for i, job in enumerate(jobs):
+            try:
+                result = analyze_job_match(
+                    job_title=job["title"],
+                    company=job["company"],
+                    job_description=job.get("description", ""),
+                    location=job.get("location", ""),
+                    salary_info=str(job.get("salary", "")),
+                    job_url=job.get("url", ""),
+                    job_id=job.get("id", ""),
+                    use_cache=not args.no_cache,
+                    fetch_description=args.fetch,
+                    run_llm=False,
+                )
 
-            level = result.get("match_level", "error")
-            score = result.get("match_score", 0)
-            from_cache = result.get("from_cache", False)
+                level = result.get("match_level", "error")
+                kw_score = result.get("keyword_score", 0)
+                combined = result.get("combined_score", kw_score)
 
-            results[level].append({
-                "title": job["title"][:50],
-                "company": job["company"][:25],
-                "score": score,
-                "cached": from_cache,
-                "url": job.get("url", ""),
-            })
+                results[level].append({
+                    "title": job["title"][:50],
+                    "company": job["company"][:25],
+                    "keyword_score": kw_score,
+                    "llm_score": result.get("llm_score"),
+                    "combined_score": combined,
+                    "url": job.get("url", ""),
+                })
 
-            if args.verbose:
-                cache_indicator = "📦" if from_cache else "🆕"
-                print(f"  {cache_indicator} {score}% - {job['title'][:40]} @ {job['company'][:20]}")
+                if args.verbose:
+                    cached = "📦" if result.get("from_cache") else "🆕"
+                    print(f"  {cached} kw={kw_score}% - {job['title'][:40]}")
 
-            # Progress every 50 jobs
-            if not args.verbose and (i + 1) % 50 == 0:
-                elapsed = time.time() - start_time
-                print(f"  Processed {i + 1}/{len(jobs)} jobs ({elapsed:.1f}s)")
+                if not args.verbose and (i + 1) % 100 == 0:
+                    elapsed = time.time() - start_time
+                    print(f"  Processed {i + 1}/{len(jobs)} ({elapsed:.1f}s)")
 
-        except Exception as e:
-            results["error"].append({"title": job["title"][:40], "error": str(e)[:50]})
+            except Exception as e:
+                results["error"].append({"title": job["title"][:40], "error": str(e)[:50]})
 
     elapsed = time.time() - start_time
+
+    # Summary
     print()
     print("=" * 70)
-    print(f"COMPLETE! Processed {len(jobs)} jobs in {elapsed:.1f}s")
-    if skipped:
-        print(f"Skipped {skipped} already-cached jobs")
+    print(f"COMPLETE! {len(jobs)} jobs in {elapsed:.1f}s")
     print("=" * 70)
     print()
-    print("📊 SUMMARY:")
-    print(f"  🟢 Strong (80%+): {len(results['strong'])}")
-    print(f"  🟢 Good (60-79%): {len(results['good'])}")
+    print("📊 MATCH DISTRIBUTION:")
+    print(f"  🟢 Strong (80%+):    {len(results['strong'])}")
+    print(f"  🟢 Good (60-79%):    {len(results['good'])}")
     print(f"  🟡 Partial (40-59%): {len(results['partial'])}")
-    print(f"  🔴 Weak (<40%): {len(results['weak'])}")
-    print(f"  ⛔ Excluded: {len(results['excluded'])}")
-    print(f"  ❌ Errors: {len(results['error'])}")
+    print(f"  🔴 Weak (<40%):      {len(results['weak'])}")
+    print(f"  ⛔ Excluded:         {len(results['excluded'])}")
+    print(f"  ❌ Errors:           {len(results['error'])}")
     print()
 
-    # Filter by min score
+    # Top matches
     min_score = args.min_score
-
-    # Show top matches
-    if results["strong"]:
-        filtered = [m for m in results["strong"] if m["score"] >= min_score]
+    all_good = results["strong"] + results["good"]
+    if all_good:
+        filtered = sorted(
+            [m for m in all_good if m.get("combined_score", m.get("keyword_score", 0)) >= min_score],
+            key=lambda x: x.get("combined_score", x.get("keyword_score", 0)),
+            reverse=True
+        )
         if filtered:
-            print("🏆 STRONG MATCHES (80%+):")
-            for m in filtered[:15]:
-                print(f"  {m['score']}% - {m['title']} @ {m['company']}")
+            print("🏆 TOP MATCHES:")
+            for m in filtered[:20]:
+                kw = m.get("keyword_score", 0)
+                llm = m.get("llm_score")
+                combined = m.get("combined_score", kw)
+                llm_str = f" llm={llm}%" if llm is not None else ""
+                print(f"  {combined}% (kw={kw}%{llm_str}) - {m['title'][:35]} @ {m['company'][:15]}")
             print()
 
-    if results["good"]:
-        filtered = [m for m in sorted(results["good"], key=lambda x: x["score"], reverse=True) if m["score"] >= min_score]
-        if filtered:
-            print("✅ GOOD MATCHES (60-79%):")
-            for m in filtered[:15]:
-                print(f"  {m['score']}% - {m['title']} @ {m['company']}")
-            print()
-
-    # Show cache stats
+    # Cache stats
     stats = cache.stats()
-    print(f"💾 Cache: {stats['total_jobs']} jobs, {stats['total_matches']} matches cached")
+    print(f"💾 Cache: {stats['total_jobs']} jobs, {stats['total_matches']} matches")
 
 
 if __name__ == "__main__":
