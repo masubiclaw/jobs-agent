@@ -4,35 +4,136 @@ import os
 import logging
 import re
 import hashlib
-from typing import Dict, List, Any
+import requests
+from typing import Dict, List, Any, Optional
+from bs4 import BeautifulSoup
 
 from google.adk.agents import LlmAgent
 from google.adk.tools import FunctionTool
 
 from .prompt import JOB_MATCHER_PROMPT
-from job_agent_coordinator.tools.profile_store import get_store, get_search_context
+from job_agent_coordinator.tools.profile_store import get_store
 from job_agent_coordinator.tools.job_cache import get_cache
 
 logger = logging.getLogger(__name__)
 
 LLM_MODEL = os.getenv("LLM_MODEL", "ollama/gemma3:27b")
+REQUEST_TIMEOUT = 15
+USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+
+
+def _fetch_job_description(url: str) -> Optional[str]:
+    """
+    Fetch and extract job description from a URL.
+    Returns cleaned text content or None if fetch fails.
+    
+    Note: Some sites (Indeed, Greenhouse, Lever) require JS rendering.
+    This function uses basic requests which may return minimal content for JS-heavy sites.
+    """
+    if not url:
+        return None
+    
+    # Check if URL needs JS (will get minimal content)
+    js_sites = ["greenhouse.io", "lever.co", "indeed.com", "linkedin.com", "workday.com"]
+    needs_js = any(site in url.lower() for site in js_sites)
+    
+    try:
+        headers = {
+            "User-Agent": USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT, allow_redirects=True)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, "html.parser")
+        
+        # Remove non-content elements
+        for element in soup(["script", "style", "nav", "footer", "header", "aside", "noscript", "iframe"]):
+            element.decompose()
+        
+        # Try to find job description container (extended selectors)
+        job_selectors = [
+            # Greenhouse specific
+            "#content", ".content", "[class*='content']",
+            # Generic job description
+            ".job-description", "#job-description", "[class*='job-desc']",
+            ".description", "#description", "[class*='Description']",
+            ".job-details", "#job-details", "[class*='jobDetails']",
+            ".posting-content", "[class*='posting']",
+            # Indeed specific
+            "#jobDescriptionText", ".jobsearch-JobComponent",
+            # LinkedIn
+            ".description__text", ".show-more-less-html",
+            # Fallbacks
+            "article", "main", "[role='main']", ".container",
+        ]
+        
+        job_content = None
+        for selector in job_selectors:
+            try:
+                container = soup.select_one(selector)
+                if container:
+                    text = container.get_text(separator=" ", strip=True)
+                    if len(text) > 200:  # Minimum viable content
+                        job_content = text
+                        break
+            except:
+                continue
+        
+        if not job_content:
+            # Fallback to body text
+            body = soup.find("body")
+            if body:
+                job_content = body.get_text(separator=" ", strip=True)
+            else:
+                job_content = soup.get_text(separator=" ", strip=True)
+        
+        # Clean up
+        job_content = re.sub(r'\s+', ' ', job_content)
+        
+        # Truncate if too long
+        if len(job_content) > 10000:
+            job_content = job_content[:10000]
+        
+        if needs_js and len(job_content) < 500:
+            logger.info(f"📄 Fetched {len(job_content)} chars (site requires JS, may be incomplete)")
+        else:
+            logger.info(f"📄 Fetched {len(job_content)} chars from {url[:50]}...")
+        
+        return job_content if len(job_content) >= 100 else None
+        
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 403:
+            logger.warning(f"⚠️ Site blocked request (403): {url[:50]}...")
+        else:
+            logger.warning(f"⚠️ HTTP error fetching description: {e}")
+        return None
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to fetch job description: {e}")
+        return None
+
+
+def _get_profile_context() -> Dict[str, Any]:
+    """Get profile context as a dictionary for internal use."""
+    return get_store().get_search_context()
 
 
 def _get_profile_hash() -> str:
     """Generate a hash of the current profile for cache invalidation."""
-    context = get_search_context()
-    if not context.get("success"):
+    context = _get_profile_context()
+    if not context:
         return ""
-    profile = context.get("context", {})
-    profile_str = str(sorted(profile.items()))
+    profile_str = str(sorted(context.items()))
     return hashlib.md5(profile_str.encode()).hexdigest()[:8]
 
 
-def _generate_job_id(job_title: str, company: str, job_url: str) -> str:
-    """Generate a consistent job ID for matching."""
+def _generate_job_id(job_title: str, company: str, location: str, job_url: str) -> str:
+    """Generate a consistent job ID for matching (must match job_cache._generate_id)."""
     if job_url:
         return hashlib.md5(job_url.encode()).hexdigest()[:12]
-    content = f"{job_title}{company}"
+    # Fallback must match job_cache: title + company + location
+    content = f"{job_title}{company}{location}"
     return hashlib.md5(content.encode()).hexdigest()[:12]
 
 
@@ -43,7 +144,9 @@ def analyze_job_match(
     location: str = "",
     salary_info: str = "",
     job_url: str = "",
-    use_cache: bool = True
+    job_id: str = "",
+    use_cache: bool = True,
+    fetch_description: bool = True
 ) -> Dict[str, Any]:
     """
     Analyze how well a job matches the user's profile.
@@ -55,14 +158,24 @@ def analyze_job_match(
         location: Job location
         salary_info: Salary range if available
         job_url: Link to job posting
+        job_id: Optional job ID (use when matching from cache to ensure ID consistency)
         use_cache: Whether to check/use cached results (default: True)
+        fetch_description: If description is empty and URL exists, fetch it (default: True)
     
     Returns:
         Detailed match analysis with scores and recommendations
     """
-    # Generate IDs for caching
-    job_id = _generate_job_id(job_title, company, job_url)
+    # Use provided job_id or generate one
+    if not job_id:
+        job_id = _generate_job_id(job_title, company, location, job_url)
     profile_hash = _get_profile_hash()
+    
+    # Fetch job description if missing but URL is available
+    if (not job_description or len(job_description) < 50) and job_url and fetch_description:
+        logger.info(f"📥 Fetching description for: {job_title[:40]}...")
+        fetched_desc = _fetch_job_description(job_url)
+        if fetched_desc:
+            job_description = fetched_desc
     
     # Check cache first
     if use_cache:
@@ -79,15 +192,13 @@ def analyze_job_match(
             }
     
     # Get user's profile context
-    context = get_search_context()
-    if not context.get("success"):
+    profile = _get_profile_context()
+    if not profile:
         return {
             "success": False,
             "error": "No user profile found. Please create a profile first using create_profile.",
             "match_score": 0
         }
-    
-    profile = context.get("context", {})
     
     # Extract profile info
     user_skills = set(s.lower() for s in profile.get("skills", []))
@@ -382,9 +493,9 @@ def _generate_toon_report(
 
 # Create the tool
 analyze_job_match_tool = FunctionTool(func=analyze_job_match)
-get_search_context_tool = FunctionTool(func=get_search_context)
 
-# Create the agent
+# Note: job_matcher_agent is deprecated - use analyze_job_match_tool directly for faster matching
+# The agent is kept for backwards compatibility but the tool is preferred
 job_matcher_agent = LlmAgent(
     name="job_matcher_agent",
     model=LLM_MODEL,
@@ -396,7 +507,6 @@ job_matcher_agent = LlmAgent(
     output_key="job_match_report",
     tools=[
         analyze_job_match_tool,
-        get_search_context_tool,
     ],
 )
 

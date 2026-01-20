@@ -471,7 +471,7 @@ def create_profile(name: str, email: str = "", location: str = "") -> dict:
     }
 
 
-def get_profile(profile_id: str = "") -> dict:
+def get_profile(profile_id: str = "") -> str:
     """
     Get a user profile.
     
@@ -479,12 +479,51 @@ def get_profile(profile_id: str = "") -> dict:
         profile_id: Profile ID (empty for active profile)
     
     Returns:
-        Profile data
+        TOON formatted profile data
     """
     profile = get_store().get(profile_id or None)
     if not profile:
-        return {"success": False, "error": "Profile not found"}
-    return {"success": True, "profile": profile}
+        return "[profile]\nstatus: not found\naction: create a profile with create_profile"
+    
+    lines = [
+        "[profile]",
+        f"id: {profile.get('id', 'unknown')}",
+        f"name: {profile.get('name', 'Unknown')}",
+        f"email: {profile.get('email', 'not set')}",
+        f"location: {profile.get('location', 'not set')}",
+        f"created: {profile.get('created', 'unknown')}",
+    ]
+    
+    # Skills
+    skills = profile.get("skills", [])
+    if skills:
+        lines.extend(["", "[skills]"])
+        for s in skills[:10]:
+            level = s.get("level", "")
+            lines.append(f"- {s.get('name', 'unknown')}: {level}")
+    
+    # Preferences
+    prefs = profile.get("preferences", {})
+    if prefs:
+        lines.extend(["", "[preferences]"])
+        if prefs.get("target_roles"):
+            lines.append(f"target_roles: {', '.join(prefs['target_roles'])}")
+        if prefs.get("target_locations"):
+            lines.append(f"target_locations: {', '.join(prefs['target_locations'])}")
+        if prefs.get("remote_preference"):
+            lines.append(f"remote_preference: {prefs['remote_preference']}")
+        if prefs.get("salary_min"):
+            lines.append(f"salary_range: ${prefs.get('salary_min', 0):,} - ${prefs.get('salary_max', 0):,}")
+        if prefs.get("excluded_companies"):
+            lines.append(f"excluded_companies: {', '.join(prefs['excluded_companies'])}")
+    
+    # Resume summary
+    resume = profile.get("resume", {})
+    if resume.get("summary"):
+        lines.extend(["", "[resume_summary]"])
+        lines.append(resume["summary"][:200])
+    
+    return "\n".join(lines)
 
 
 def update_profile(name: str = "", email: str = "", location: str = "", notes: str = "") -> dict:
@@ -585,21 +624,56 @@ def set_resume_summary(summary: str) -> dict:
     return {"success": True, "resume": resume}
 
 
-def get_search_context() -> dict:
+def get_search_context() -> str:
     """
     Get profile context optimized for job searching.
     Returns skills, preferences, and other relevant info.
     """
     context = get_store().get_search_context()
     if not context:
-        return {"success": False, "error": "No active profile"}
-    return {"success": True, "context": context}
+        return "[search_context]\nstatus: no active profile\naction: create a profile first"
+    
+    lines = [
+        "[search_context]",
+        f"name: {context.get('name', 'Unknown')}",
+        f"location: {context.get('location', 'not set')}",
+    ]
+    
+    if context.get("skills"):
+        lines.append(f"skills: {', '.join(context['skills'][:10])}")
+    if context.get("target_roles"):
+        lines.append(f"target_roles: {', '.join(context['target_roles'])}")
+    if context.get("target_locations"):
+        lines.append(f"target_locations: {', '.join(context['target_locations'])}")
+    if context.get("remote_preference"):
+        lines.append(f"remote_preference: {context['remote_preference']}")
+    if context.get("salary_range"):
+        lines.append(f"salary_range: {context['salary_range']}")
+    if context.get("excluded_companies"):
+        lines.append(f"excluded_companies: {', '.join(context['excluded_companies'])}")
+    
+    return "\n".join(lines)
 
 
-def list_all_profiles() -> dict:
+def list_all_profiles() -> str:
     """List all stored profiles."""
     profiles = get_store().list_profiles()
-    return {"success": True, "profiles": profiles, "count": len(profiles)}
+    
+    lines = [
+        "[profiles]",
+        f"total: {len(profiles)}",
+        ""
+    ]
+    
+    for p in profiles:
+        lines.append(f"- {p.get('name', 'Unknown')} (id: {p.get('id', 'unknown')[:8]})")
+        if p.get("email"):
+            lines.append(f"  email: {p['email']}")
+    
+    if not profiles:
+        lines.append("- no profiles found")
+    
+    return "\n".join(lines)
 
 
 # Create FunctionTools

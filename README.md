@@ -19,30 +19,33 @@ A multi-agent job search and matching system built with Google ADK. Features int
 │                     (Main Orchestrator)                          │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│  ┌──────────────────┐    ┌──────────────────┐                   │
-│  │ job_searcher     │    │ job_matcher      │                   │
-│  │ - JobSpy search  │    │ - Profile match  │                   │
-│  │ - Multi-platform │    │ - Skill analysis │                   │
-│  └────────┬─────────┘    └────────┬─────────┘                   │
-│           │                       │                              │
-│  ┌────────┴───────────────────────┴─────────┐                   │
-│  │                   Tools                    │                   │
-│  │  • JobSpy       • Profile Store           │                   │
-│  │  • Job Cache    • Job Links Scraper       │                   │
-│  │  • Local Cache  • Prompt Parser           │                   │
-│  └───────────────────────────────────────────┘                   │
+│  ┌──────────────────┐                                           │
+│  │ job_searcher     │  ← Agent (uses LLM for search planning)   │
+│  │ - JobSpy search  │                                           │
+│  │ - Multi-platform │                                           │
+│  └────────┬─────────┘                                           │
+│           │                                                      │
+│  ┌────────┴─────────────────────────────────────────────┐       │
+│  │                      Tools                            │       │
+│  │  • analyze_job_match  (fast, algorithmic matching)   │       │
+│  │  • JobSpy search      • Profile Store                │       │
+│  │  • Job Cache          • Job Links Scraper            │       │
+│  │  • Match Aggregation  • Prompt Parser                │       │
+│  └───────────────────────────────────────────────────────┘       │
 │                          │                                       │
 │  ┌───────────────────────┴───────────────────┐                  │
 │  │              Local Storage                 │                  │
 │  │  .job_cache/                               │                  │
-│  │  ├── jobs.json      (job listings)        │                  │
-│  │  ├── matches.json   (match results)       │                  │
+│  │  ├── jobs.json      (664+ job listings)   │                  │
+│  │  ├── matches.json   (cached match results)│                  │
 │  │  ├── profiles.json  (user profiles)       │                  │
 │  │  ├── exclusions.json                      │                  │
 │  │  └── chroma/        (vector embeddings)   │                  │
 │  └───────────────────────────────────────────┘                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+**Note:** Job matching is a direct tool (not an agent) for speed - it processes 664 jobs in ~1 second!
 
 ## Prerequisites
 
@@ -122,11 +125,31 @@ INITIAL_PROMPT="search seattle for software engineering jobs"
 
 ## Running the Agent
 
+### Web UI (Interactive)
 ```bash
 # Start the web UI
 adk web
 
 # Open http://localhost:8000 in your browser
+```
+
+### CLI Scripts (Batch Operations)
+
+```bash
+# Show job cache statistics
+python scripts/show_cache_stats.py
+python scripts/show_cache_stats.py --matches    # Include match stats
+
+# Run job matching on all cached jobs
+python scripts/run_job_matcher.py               # Match all 664 jobs (~1 sec)
+python scripts/run_job_matcher.py --limit 50    # Match first 50 jobs
+python scripts/run_job_matcher.py --min-score 60  # Show only 60%+ matches
+
+# Run job scraper
+python scripts/run_job_scraper.py               # Show available sources
+python scripts/run_job_scraper.py --source Boeing  # Scrape single source
+python scripts/run_job_scraper.py --category Aerospace  # Scrape category
+python scripts/run_job_scraper.py --all         # Scrape ALL (10-20 min!)
 ```
 
 ## Example Commands
@@ -183,9 +206,8 @@ jobs-agent/
 │   │   ├── job_searcher/           # JobSpy search agent
 │   │   │   ├── agent.py
 │   │   │   └── prompt.py
-│   │   └── job_matcher/            # Profile matching agent
-│   │       ├── agent.py
-│   │       └── prompt.py
+│   │   └── job_matcher/            # Job matching tool (algorithmic)
+│   │       └── agent.py            # analyze_job_match function
 │   └── tools/
 │       ├── jobspy_tools.py         # JobSpy integration
 │       ├── job_cache.py            # Job + match caching
@@ -193,6 +215,10 @@ jobs-agent/
 │       ├── profile_store.py        # User profiles
 │       ├── job_links_scraper.py    # Web scraper
 │       └── prompt_to_search_params.py
+├── scripts/
+│   ├── run_job_matcher.py          # Batch job matching
+│   ├── run_job_scraper.py          # Batch job scraping
+│   └── show_cache_stats.py         # Cache statistics
 ├── tests/
 │   ├── test_jobspy.py
 │   └── test_job_scraper.py

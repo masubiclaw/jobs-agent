@@ -568,7 +568,7 @@ def search_cached_jobs(
     location: str = "",
     semantic: bool = False,
     limit: int = 10
-) -> dict:
+) -> str:
     """
     Search cached job listings.
     
@@ -580,7 +580,7 @@ def search_cached_jobs(
         limit: Maximum results
     
     Returns:
-        Dict with jobs and count
+        TOON formatted search results
     """
     cache = get_cache()
     
@@ -589,16 +589,77 @@ def search_cached_jobs(
     else:
         jobs = cache.search(query=query, company=company, location=location, limit=limit)
     
-    return {
-        "success": True,
-        "count": len(jobs),
-        "jobs": jobs,
-    }
+    # Build TOON output
+    lines = [
+        "[job_search_results]",
+        f"query: {query or 'all'}",
+        f"company_filter: {company or 'none'}",
+        f"location_filter: {location or 'none'}",
+        f"semantic_search: {semantic}",
+        f"results_found: {len(jobs)}",
+        "",
+        "[jobs]"
+    ]
+    
+    for i, job in enumerate(jobs, 1):
+        title = job.get("title", "Unknown")[:45]
+        comp = job.get("company", "Unknown")[:20]
+        loc = job.get("location", "")[:20]
+        salary = job.get("salary", "")
+        url = job.get("url", "")
+        
+        lines.append(f"{i}. {title}")
+        lines.append(f"   company: {comp}")
+        if loc:
+            lines.append(f"   location: {loc}")
+        if salary and salary != "Not specified":
+            lines.append(f"   salary: {salary}")
+        if url:
+            lines.append(f"   url: {url}")
+        lines.append("")
+    
+    if not jobs:
+        lines.append("- no jobs found matching criteria")
+    
+    return "\n".join(lines)
 
 
-def get_cache_stats() -> dict:
-    """Get job cache statistics."""
-    return get_cache().stats()
+def get_cache_stats() -> str:
+    """Get job cache statistics in TOON format."""
+    stats = get_cache().stats()
+    
+    lines = [
+        "[job_cache_stats]",
+        f"total_jobs: {stats['total_jobs']}",
+        f"total_matches: {stats['total_matches']}",
+        f"vector_count: {stats['vector_count']}",
+        f"cache_dir: {stats['cache_dir']}",
+        "",
+        "[platforms]"
+    ]
+    
+    for platform, count in stats.get("platforms", {}).items():
+        lines.append(f"- {platform}: {count}")
+    
+    lines.extend(["", "[top_companies]"])
+    for company, count in stats.get("top_companies", [])[:10]:
+        lines.append(f"- {company}: {count}")
+    
+    match_stats = stats.get("match_stats", {})
+    if match_stats.get("total_matches", 0) > 0:
+        lines.extend([
+            "",
+            "[match_statistics]",
+            f"total_matches: {match_stats.get('total_matches', 0)}",
+            f"avg_score: {match_stats.get('avg_score', 0):.1f}%",
+            f"max_score: {match_stats.get('max_score', 0)}%",
+            f"min_score: {match_stats.get('min_score', 0)}%",
+        ])
+        for level, count in match_stats.get("level_distribution", {}).items():
+            emoji = "🟢" if level in ("strong", "good") else "🟡" if level == "partial" else "🔴"
+            lines.append(f"- {emoji} {level}: {count}")
+    
+    return "\n".join(lines)
 
 
 def clear_job_cache() -> dict:
@@ -666,7 +727,7 @@ def get_cached_match(job_id: str, profile_hash: str = "") -> dict:
     return {"success": True, "found": False, "message": "No cached match found"}
 
 
-def list_cached_matches(min_score: int = 0, limit: int = 20) -> dict:
+def list_cached_matches(min_score: int = 0, limit: int = 20) -> str:
     """
     List cached job matches.
     
@@ -675,15 +736,37 @@ def list_cached_matches(min_score: int = 0, limit: int = 20) -> dict:
         limit: Maximum results
     
     Returns:
-        Dict with list of matches
+        TOON formatted list of matches
     """
     cache = get_cache()
     matches = cache.list_matches(min_score=min_score, limit=limit)
-    return {
-        "success": True,
-        "count": len(matches),
-        "matches": matches
-    }
+    
+    lines = [
+        "[cached_matches]",
+        f"min_score_filter: {min_score}%",
+        f"limit: {limit}",
+        f"matches_found: {len(matches)}",
+        "",
+        "[matches]"
+    ]
+    
+    for i, m in enumerate(matches, 1):
+        job = cache.get(m.get("job_id", ""))
+        score = m.get("match_score", 0)
+        level = m.get("match_level", "unknown")
+        emoji = "🟢" if level in ("strong", "good") else "🟡" if level == "partial" else "🔴"
+        
+        if job:
+            title = job.get("title", "Unknown")[:40]
+            company = job.get("company", "Unknown")[:20]
+            lines.append(f"{i}. {emoji} {score}% - {title} @ {company}")
+        else:
+            lines.append(f"{i}. {emoji} {score}% - job_id: {m.get('job_id', 'unknown')}")
+    
+    if not matches:
+        lines.append("- no matches found")
+    
+    return "\n".join(lines)
 
 
 def clear_cached_matches(job_id: str = "") -> dict:
@@ -703,9 +786,8 @@ def clear_cached_matches(job_id: str = "") -> dict:
 
 def aggregate_job_matches(
     min_score: int = 0,
-    max_results: int = 50,
-    include_toon_reports: bool = False
-) -> dict:
+    max_results: int = 50
+) -> str:
     """
     Aggregate and analyze all cached job matches.
     
@@ -714,26 +796,19 @@ def aggregate_job_matches(
     - Score distribution and statistics
     - Common skill gaps across all matches
     - Top recommendations
-    - TOON formatted summary report
     
     Args:
         min_score: Only include matches with score >= this value
         max_results: Maximum number of jobs to include in ranking
-        include_toon_reports: Include full TOON reports for each match
     
     Returns:
-        Dict with aggregated analysis
+        TOON formatted aggregation report
     """
     cache = get_cache()
     matches = cache.list_matches(min_score=min_score, limit=max_results)
     
     if not matches:
-        return {
-            "success": True,
-            "total_matches": 0,
-            "message": "No job matches found in cache. Run job matching first.",
-            "toon_summary": "[job_match_summary]\nstatus: no matches found\naction: run analyze_job_match on jobs of interest"
-        }
+        return "[job_match_summary]\nstatus: no matches found\naction: run analyze_job_match on jobs of interest"
     
     # Get job details for each match
     jobs_with_matches = []
@@ -741,10 +816,7 @@ def aggregate_job_matches(
         job_id = match.get("job_id", "")
         job = cache.get(job_id)
         if job:
-            jobs_with_matches.append({
-                "job": job,
-                "match": match
-            })
+            jobs_with_matches.append({"job": job, "match": match})
     
     # Calculate statistics
     scores = [m.get("match_score", 0) for m in matches]
@@ -756,87 +828,77 @@ def aggregate_job_matches(
         level = m.get("match_level", "unknown")
         level_counts[level] = level_counts.get(level, 0) + 1
     
-    # Extract skill gaps from TOON reports (simple parsing)
+    # Extract skill gaps from TOON reports
     skill_gaps = {}
     for m in matches:
         report = m.get("toon_report", "")
         if "[skill_gaps]" in report:
-            # Extract skills between [skill_gaps] and next section
-            gap_section = report.split("[skill_gaps]")[1].split("[")[0] if "[skill_gaps]" in report else ""
+            gap_section = report.split("[skill_gaps]")[1].split("[")[0]
             for line in gap_section.split("\n"):
                 if line.strip().startswith("- ") and ":" in line:
                     skill = line.split(":")[0].replace("- ", "").strip()
                     if skill and skill != "none":
                         skill_gaps[skill] = skill_gaps.get(skill, 0) + 1
     
-    # Sort skill gaps by frequency
     top_skill_gaps = sorted(skill_gaps.items(), key=lambda x: x[1], reverse=True)[:10]
     
-    # Build ranked list
-    ranked_jobs = []
-    for item in jobs_with_matches[:max_results]:
-        job = item["job"]
-        match = item["match"]
-        entry = {
-            "rank": len(ranked_jobs) + 1,
-            "job_id": job.get("id", ""),
-            "title": job.get("title", "Unknown"),
-            "company": job.get("company", "Unknown"),
-            "location": job.get("location", ""),
-            "score": match.get("match_score", 0),
-            "level": match.get("match_level", "unknown"),
-            "url": job.get("url", ""),
-        }
-        if include_toon_reports:
-            entry["toon_report"] = match.get("toon_report", "")
-        ranked_jobs.append(entry)
-    
-    # Generate TOON summary
-    toon_lines = [
+    # Build TOON output
+    lines = [
         "[job_match_summary]",
         f"total_analyzed: {len(matches)}",
         f"avg_score: {avg_score:.1f}%",
-        f"strong_matches: {level_counts.get('strong', 0)}",
-        f"good_matches: {level_counts.get('good', 0)}",
-        f"partial_matches: {level_counts.get('partial', 0)}",
-        f"weak_matches: {level_counts.get('weak', 0)}",
+        f"max_score: {max(scores)}%",
+        f"min_score: {min(scores)}%",
+        "",
+        "[level_distribution]",
+        f"🟢 strong (80%+): {level_counts.get('strong', 0)}",
+        f"🟢 good (60-79%): {level_counts.get('good', 0)}",
+        f"🟡 partial (40-59%): {level_counts.get('partial', 0)}",
+        f"🔴 weak (<40%): {level_counts.get('weak', 0)}",
         "",
         "[top_matches]"
     ]
     
-    for job in ranked_jobs[:10]:
-        emoji = "🟢" if job["level"] in ("strong", "good") else "🟡" if job["level"] == "partial" else "🔴"
-        toon_lines.append(f"{job['rank']}. {emoji} {job['title'][:35]} @ {job['company'][:20]} ({job['score']}%)")
+    for i, item in enumerate(jobs_with_matches[:15], 1):
+        job = item["job"]
+        match = item["match"]
+        score = match.get("match_score", 0)
+        level = match.get("match_level", "unknown")
+        emoji = "🟢" if level in ("strong", "good") else "🟡" if level == "partial" else "🔴"
+        title = job.get("title", "Unknown")[:40]
+        company = job.get("company", "Unknown")[:20]
+        location = job.get("location", "")[:25]
+        url = job.get("url", "")
+        
+        lines.append(f"{i}. {emoji} {score}% - {title}")
+        lines.append(f"   company: {company}")
+        if location:
+            lines.append(f"   location: {location}")
+        lines.append(f"   url: {url if url else 'not available'}")
     
-    toon_lines.extend(["", "[common_skill_gaps]"])
+    lines.extend(["", "[common_skill_gaps]"])
     if top_skill_gaps:
         for skill, count in top_skill_gaps[:5]:
-            toon_lines.append(f"- {skill}: appears in {count} job(s)")
+            lines.append(f"- {skill}: appears in {count} job(s)")
     else:
-        toon_lines.append("- none identified")
+        lines.append("- none identified")
     
-    toon_lines.extend(["", "[recommendations]"])
+    lines.extend(["", "[recommendations]"])
+    rec_num = 1
     if level_counts.get("strong", 0) > 0:
-        toon_lines.append("1. Prioritize strong matches for immediate applications")
+        lines.append(f"{rec_num}. Prioritize strong matches for immediate applications")
+        rec_num += 1
+    if level_counts.get("good", 0) > 0:
+        lines.append(f"{rec_num}. Good matches ({level_counts.get('good', 0)}) - tailor resumes to specific requirements")
+        rec_num += 1
     if top_skill_gaps:
         top_gap = top_skill_gaps[0][0]
-        toon_lines.append(f"2. Consider learning {top_gap} - most common gap")
-    if level_counts.get("good", 0) > level_counts.get("strong", 0):
-        toon_lines.append("3. Many good matches - tailor resumes to specific requirements")
+        lines.append(f"{rec_num}. Consider learning {top_gap} - most common skill gap")
+        rec_num += 1
+    if not level_counts.get("strong", 0) and not level_counts.get("good", 0):
+        lines.append(f"{rec_num}. No strong matches yet - consider updating profile or expanding search")
     
-    return {
-        "success": True,
-        "total_matches": len(matches),
-        "statistics": {
-            "avg_score": round(avg_score, 1),
-            "max_score": max(scores) if scores else 0,
-            "min_score": min(scores) if scores else 0,
-            "level_distribution": level_counts,
-        },
-        "top_skill_gaps": top_skill_gaps,
-        "ranked_jobs": ranked_jobs,
-        "toon_summary": "\n".join(toon_lines),
-    }
+    return "\n".join(lines)
 
 
 # Create FunctionTools

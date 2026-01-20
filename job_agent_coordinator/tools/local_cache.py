@@ -101,29 +101,56 @@ def get_cache() -> LocalCache:
 
 # === Tool Functions (for agents) ===
 
-def get_exclusions() -> dict:
+def get_exclusions() -> str:
     """Get list of excluded companies."""
     exclusions = get_cache().get_exclusions()
-    return {"exclusions": exclusions, "count": len(exclusions)}
+    lines = [
+        "[excluded_companies]",
+        f"total: {len(exclusions)}",
+        ""
+    ]
+    for c in exclusions:
+        lines.append(f"- {c}")
+    if not exclusions:
+        lines.append("- none")
+    return "\n".join(lines)
 
-def add_exclusion(company: str) -> dict:
+def add_exclusion(company: str) -> str:
     """Add a company to the exclusion list."""
     exclusions = get_cache().add_exclusion(company)
-    return {"exclusions": exclusions, "added": company.lower().strip()}
+    return f"[exclusion_added]\ncompany: {company.lower().strip()}\ntotal_exclusions: {len(exclusions)}"
 
-def remove_exclusion(company: str) -> dict:
+def remove_exclusion(company: str) -> str:
     """Remove a company from the exclusion list."""
     exclusions = get_cache().remove_exclusion(company)
-    return {"exclusions": exclusions, "removed": company}
+    return f"[exclusion_removed]\ncompany: {company}\ntotal_exclusions: {len(exclusions)}"
 
-def get_cached_jobs(search_term: str = "", location: str = "") -> dict:
+def get_cached_jobs(search_term: str = "", location: str = "") -> str:
     """Get cached jobs, optionally filtered."""
     jobs = get_cache().get_jobs(search_term or None, location or None)
-    return {"jobs": jobs, "count": len(jobs)}
+    lines = [
+        "[local_cached_jobs]",
+        f"search_term: {search_term or 'all'}",
+        f"location: {location or 'all'}",
+        f"results: {len(jobs)}",
+        ""
+    ]
+    for i, job in enumerate(jobs[:20], 1):
+        lines.append(f"{i}. {job.get('title', 'Unknown')[:40]} @ {job.get('company', 'Unknown')[:20]}")
+    if not jobs:
+        lines.append("- no jobs found")
+    return "\n".join(lines)
 
-def get_cache_stats() -> dict:
-    """Get cache statistics."""
-    return get_cache().get_stats()
+def get_cache_stats() -> str:
+    """Get local cache statistics."""
+    stats = get_cache().get_stats()
+    lines = [
+        "[local_cache_stats]",
+        f"exclusions: {stats.get('exclusions', 0)}",
+        f"jobs: {stats.get('jobs', 0)}",
+        f"cache_dir: {stats.get('cache_dir', 'unknown')}"
+    ]
+    return "\n".join(lines)
 
 
 # === FunctionTools ===

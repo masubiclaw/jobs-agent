@@ -273,6 +273,33 @@ def scrape_with_playwright(url: str, wait_time: int = 3) -> Optional[Dict[str, A
                             job_content = div
                             break
             
+            # Extract job links with their text for better URL capture
+            job_links_found = []
+            base_domain = urlparse(url).netloc
+            for link in soup.find_all("a", href=True):
+                href = link.get("href", "")
+                link_text = link.get_text(strip=True)
+                
+                # Skip empty or navigation links
+                if not href or not link_text or len(link_text) < 5:
+                    continue
+                if href.startswith(("javascript:", "#", "mailto:")):
+                    continue
+                    
+                # Convert to absolute URL
+                full_url = urljoin(url, href) if not href.startswith("http") else href
+                
+                # Check if it looks like a job detail link
+                href_lower = href.lower()
+                text_lower = link_text.lower()
+                is_job_link = (
+                    any(kw in href_lower for kw in ['/job/', '/jobs/', '/position/', '/career/', '/opening/', '/requisition/', 'job_id=', 'jobid=', '/posting/']) or
+                    any(kw in text_lower for kw in ['engineer', 'manager', 'director', 'analyst', 'developer', 'scientist', 'lead', 'architect', 'coordinator', 'specialist', 'officer'])
+                )
+                
+                if is_job_link and len(link_text) < 150:
+                    job_links_found.append({"title": link_text, "url": full_url})
+            
             if job_content:
                 text = job_content.get_text(separator="\n", strip=True)
             else:
@@ -281,8 +308,15 @@ def scrape_with_playwright(url: str, wait_time: int = 3) -> Optional[Dict[str, A
             # Clean up excessive whitespace
             text = re.sub(r'\n{3,}', '\n\n', text)
             
+            # Append extracted job links to help LLM match titles with URLs
+            if job_links_found:
+                text += "\n\n--- JOB LINKS FOUND ---\n"
+                for jl in job_links_found[:100]:  # Limit to 100 links
+                    text += f"• {jl['title']} → {jl['url']}\n"
+                logger.info(f"   🔗 Found {len(job_links_found)} job detail links")
+            
             # Limit text length
-            max_chars = 30000
+            max_chars = 35000
             if len(text) > max_chars:
                 text = text[:max_chars] + "\n...[truncated]"
             
@@ -293,6 +327,7 @@ def scrape_with_playwright(url: str, wait_time: int = 3) -> Optional[Dict[str, A
                 "title": title,
                 "text": text,
                 "html": html[:50000],
+                "job_links": job_links_found,  # Include structured job links
                 "scraped_at": datetime.now().isoformat(),
                 "method": "playwright"
             }
@@ -412,8 +447,41 @@ def scrape_webpage(url: str, follow_links: bool = True) -> Optional[Dict[str, An
         
         text = "\n".join(cleaned_lines)
         
-        # Increased limit since we have cleaner text now
-        max_chars = 25000
+        # Extract job links with their text for better URL capture
+        job_links_found = []
+        for link in soup.find_all("a", href=True):
+            href = link.get("href", "")
+            link_text = link.get_text(strip=True)
+            
+            # Skip empty or navigation links
+            if not href or not link_text or len(link_text) < 5:
+                continue
+            if href.startswith(("javascript:", "#", "mailto:")):
+                continue
+                
+            # Convert to absolute URL
+            full_url = urljoin(url, href) if not href.startswith("http") else href
+            
+            # Check if it looks like a job detail link
+            href_lower = href.lower()
+            text_lower = link_text.lower()
+            is_job_link = (
+                any(kw in href_lower for kw in ['/job/', '/jobs/', '/position/', '/career/', '/opening/', '/requisition/', 'job_id=', 'jobid=', '/posting/']) or
+                any(kw in text_lower for kw in ['engineer', 'manager', 'director', 'analyst', 'developer', 'scientist', 'lead', 'architect', 'coordinator', 'specialist', 'officer'])
+            )
+            
+            if is_job_link and len(link_text) < 150:
+                job_links_found.append({"title": link_text, "url": full_url})
+        
+        # Append extracted job links to help LLM match titles with URLs
+        if job_links_found:
+            text += "\n\n--- JOB LINKS FOUND ---\n"
+            for jl in job_links_found[:100]:  # Limit to 100 links
+                text += f"• {jl['title']} → {jl['url']}\n"
+            logger.info(f"   🔗 Found {len(job_links_found)} job detail links")
+        
+        # Limit text length
+        max_chars = 30000
         if len(text) > max_chars:
             text = text[:max_chars] + "\n...[truncated]"
         
@@ -423,6 +491,7 @@ def scrape_webpage(url: str, follow_links: bool = True) -> Optional[Dict[str, An
             "url": url,
             "title": title,
             "text": text,
+            "job_links": job_links_found,  # Include structured job links
             "scraped_at": datetime.now().isoformat(),
         }
         
@@ -440,14 +509,18 @@ def extract_jobs_with_llm(
     
     logger.info(f"   🤖 Extracting jobs with {SCRAPER_MODEL}...")
     
-    # Shorter, more focused prompt for better JSON output
-    prompt = f"""Extract job titles and locations from this {source_name} careers page.
+    # Prompt that captures job URLs when available
+    source_url = scraped_data.get("url", "")
+    prompt = f"""Extract job listings from this {source_name} careers page.
+
+SOURCE URL: {source_url}
 
 PAGE CONTENT (truncated):
 {scraped_data['text'][:8000]}
 
-Output a JSON array. Each object needs: title, location.
-Keep it short. Example: [{{"title":"Software Engineer","location":"Seattle, WA"}}]
+Output a JSON array. Each object needs: title, location, url (if visible - look for job detail links/hrefs).
+If no individual job URL is found, set url to empty string "".
+Example: [{{"title":"Software Engineer","location":"Seattle, WA","url":"https://company.com/jobs/123"}}]
 
 JSON array:"""
 
@@ -502,6 +575,24 @@ JSON array:"""
                         if len(jobs) >= 30:
                             break
         
+        # Get pre-extracted job links for URL matching
+        job_links = scraped_data.get("job_links", [])
+        job_links_list = []  # List of (normalized_title, url) for fuzzy matching
+        for jl in job_links:
+            raw_title = jl.get("title", "").strip()
+            url = jl.get("url", "")
+            if not raw_title or not url:
+                continue
+            # The link text often has title+location concatenated, try to extract just title
+            # Common patterns: "Software EngineerSan Francisco" or "Manager, ProductNew York"
+            title_clean = raw_title
+            for loc_indicator in ["San Francisco", "New York", "Seattle", "Remote", "London", "Washington", "Boston", "Austin", "Chicago", "Los Angeles", "Denver"]:
+                idx = title_clean.find(loc_indicator)
+                if idx > 10:  # Make sure we don't cut too short
+                    title_clean = title_clean[:idx].strip()
+                    break
+            job_links_list.append((title_clean.lower(), url, raw_title.lower()))
+        
         # Enrich jobs with metadata
         for job in jobs:
             if isinstance(job, dict):
@@ -513,18 +604,57 @@ JSON array:"""
                 job["company"] = job.get("company", source_name)
                 job.setdefault("location", "Not specified")
                 job.setdefault("salary", "Not disclosed")
-                job.setdefault("job_url", scraped_data["url"])
+                
+                # Try to match URL from pre-extracted job links
+                if not job.get("url") and job_links_list:
+                    title_norm = job.get("title", "").lower().strip()
+                    best_match = None
+                    best_score = 0
+                    
+                    for link_title_clean, link_url, link_title_raw in job_links_list:
+                        # Method 1: Check if job title is contained in link text
+                        if title_norm in link_title_raw or link_title_clean in title_norm:
+                            best_match = link_url
+                            best_score = 1.0
+                            break
+                        
+                        # Method 2: Check if cleaned link title matches
+                        if title_norm == link_title_clean:
+                            best_match = link_url
+                            best_score = 1.0
+                            break
+                        
+                        # Method 3: Word overlap scoring
+                        title_words = set(title_norm.split())
+                        link_words = set(link_title_clean.split())
+                        if title_words and link_words:
+                            overlap = len(title_words & link_words)
+                            # Score based on how many of the job title words match
+                            score = overlap / len(title_words) if title_words else 0
+                            if score > 0.7 and score > best_score:
+                                best_score = score
+                                best_match = link_url
+                    
+                    if best_match:
+                        job["url"] = best_match
+                
+                # Final fallback to source URL
+                if not job.get("url"):
+                    job["url"] = scraped_data["url"]
         
         # Filter out invalid entries
         jobs = [j for j in jobs if isinstance(j, dict) and j.get("title")]
         
-        logger.info(f"   📊 Extracted {len(jobs)} jobs in {elapsed:.1f}s")
+        # Count URLs matched
+        jobs_with_urls = sum(1 for j in jobs if j.get("url") and j.get("url") != scraped_data["url"])
+        logger.info(f"   📊 Extracted {len(jobs)} jobs in {elapsed:.1f}s ({jobs_with_urls} with direct URLs)")
         
         # Log each job found
         for job in jobs[:10]:
             title = str(job.get('title') or 'Unknown')[:45]
             location = str(job.get('location') or 'N/A')[:20]
-            logger.info(f"      → {title} | {location}")
+            has_url = "🔗" if job.get("url") and job.get("url") != scraped_data["url"] else ""
+            logger.info(f"      → {title} | {location} {has_url}")
         if len(jobs) > 10:
             logger.info(f"      ... and {len(jobs) - 10} more")
         

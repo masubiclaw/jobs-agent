@@ -7,7 +7,7 @@ from google.adk.agents import LlmAgent
 from google.adk.tools.agent_tool import AgentTool
 
 from .sub_agents.job_searcher import job_searcher_agent
-from .sub_agents.job_matcher import job_matcher_agent
+from .sub_agents.job_matcher.agent import analyze_job_match_tool  # Tool, not agent
 from .tools.profile_store import (
     create_profile_tool,
     get_profile_tool,
@@ -42,13 +42,14 @@ job_agent_coordinator = LlmAgent(
     model=MODEL,
     description=(
         "Orchestrates job searches and profile matching. Uses job_searcher to find jobs, "
-        "job_matcher to analyze job fit, and profile tools to manage user preferences."
+        "analyze_job_match to analyze job fit, and profile tools to manage user preferences."
     ),
     instruction=prompt.JOB_AGENT_COORDINATOR_PROMPT,
     output_key="job_agent_coordinator_output",
     tools=[
         AgentTool(agent=job_searcher_agent),
-        AgentTool(agent=job_matcher_agent),
+        # Job matching tool (direct, no agent wrapper - faster!)
+        analyze_job_match_tool,
         # Profile tools
         create_profile_tool,
         get_profile_tool,
