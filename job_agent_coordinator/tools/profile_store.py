@@ -8,6 +8,8 @@ from typing import Optional, List, Dict, Any
 
 from google.adk.tools import FunctionTool
 
+from .toon_format import to_toon, from_toon
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,48 +35,78 @@ class ProfileStore:
         logger.info(f"👤 ProfileStore ready: {len(self._profiles)} profiles at {self.storage_dir}")
     
     def _load_all(self) -> Dict[str, Dict[str, Any]]:
-        """Load all profiles from disk."""
+        """Load all profiles from disk (TOON format with JSON fallback)."""
         profiles = {}
+        
+        # Load TOON files
+        for f in self.storage_dir.glob("*.toon"):
+            if f.name == "_meta.toon":
+                continue
+            try:
+                data = from_toon(f.read_text())
+                if data:
+                    data["id"] = data.get("id", f.stem)
+                    profiles[data["id"]] = data
+            except Exception as e:
+                logger.warning(f"Failed to load profile {f}: {e}")
+        
+        # Fallback: Load JSON files (for migration)
         for f in self.storage_dir.glob("*.json"):
             if f.name == "_meta.json":
                 continue
+            profile_id = f.stem
+            if profile_id in profiles:
+                continue  # Already loaded from TOON
             try:
                 data = json.loads(f.read_text())
                 profiles[data.get("id", f.stem)] = data
+                logger.info(f"📦 Migrating profile {profile_id} from JSON to TOON...")
             except Exception as e:
                 logger.warning(f"Failed to load profile {f}: {e}")
+        
         return profiles
     
     def _get_default_active(self) -> Optional[str]:
         """Get default active profile."""
-        meta_file = self.storage_dir / "_meta.json"
+        # Try TOON meta file
+        meta_file = self.storage_dir / "_meta.toon"
         if meta_file.exists():
             try:
-                meta = json.loads(meta_file.read_text())
+                meta = from_toon(meta_file.read_text())
                 return meta.get("active_profile")
             except:
                 pass
+        
+        # Fallback: JSON meta file
+        meta_json = self.storage_dir / "_meta.json"
+        if meta_json.exists():
+            try:
+                meta = json.loads(meta_json.read_text())
+                return meta.get("active_profile")
+            except:
+                pass
+        
         # Return first profile if any
         return next(iter(self._profiles.keys()), None)
     
     def _save_profile(self, profile_id: str):
-        """Save a profile to disk."""
+        """Save a profile to disk in TOON format."""
         if profile_id not in self._profiles:
             return
         
         profile = self._profiles[profile_id]
         profile["updated_at"] = datetime.now().isoformat()
         
-        filepath = self.storage_dir / f"{profile_id}.json"
-        filepath.write_text(json.dumps(profile, indent=2, default=str))
+        filepath = self.storage_dir / f"{profile_id}.toon"
+        filepath.write_text(to_toon(profile) + '\n')
     
     def _save_meta(self):
-        """Save metadata."""
-        meta_file = self.storage_dir / "_meta.json"
-        meta_file.write_text(json.dumps({
+        """Save metadata in TOON format."""
+        meta_file = self.storage_dir / "_meta.toon"
+        meta_file.write_text(to_toon({
             "active_profile": self._active_profile,
             "updated_at": datetime.now().isoformat(),
-        }, indent=2))
+        }) + '\n')
     
     def create(
         self,
@@ -399,9 +431,16 @@ class ProfileStore:
             return False
         
         del self._profiles[profile_id]
-        filepath = self.storage_dir / f"{profile_id}.json"
+        
+        # Remove TOON file
+        filepath = self.storage_dir / f"{profile_id}.toon"
         if filepath.exists():
             filepath.unlink()
+        
+        # Also remove JSON file if exists (migration cleanup)
+        json_path = self.storage_dir / f"{profile_id}.json"
+        if json_path.exists():
+            json_path.unlink()
         
         # Update active if needed
         if self._active_profile == profile_id:
