@@ -246,6 +246,21 @@ JOB_AGENT_LOG_LEVEL=INFO
 EOF
 ```
 
+### 5. Use Fine-Tuned Model (Optional)
+
+A fine-tuned model is available for improved job matching accuracy. It was trained on labeled job-candidate matches using LoRA fine-tuning with MLX.
+
+```bash
+# Enable fine-tuned model (requires Apple Silicon)
+export USE_MLX_MODEL=true
+export MLX_MODEL_PATH=models/job-matcher-lora/fused_model
+
+# Run job matcher with fine-tuned model
+python scripts/run_job_matcher.py --llm
+```
+
+The fine-tuned model uses MLX for inference instead of Ollama. Training data is stored in `data/` and the model weights are in `models/job-matcher-lora/`.
+
 ## CLI Script Reference
 
 ```bash

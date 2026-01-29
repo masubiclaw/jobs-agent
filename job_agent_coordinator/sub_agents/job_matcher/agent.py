@@ -42,6 +42,14 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 FAST_MODEL = os.getenv("OLLAMA_FAST_MODEL", "gemma3:12b")
 REQUEST_TIMEOUT = 15
 LLM_TIMEOUT = 120
+
+# MLX-LM Configuration (optional fine-tuned model)
+MLX_MODEL_PATH = os.getenv("MLX_MODEL_PATH", "")  # Path to fine-tuned MLX model
+USE_MLX_MODEL = os.getenv("USE_MLX_MODEL", "false").lower() == "true"
+
+# Lazy-loaded MLX model
+_mlx_model = None
+_mlx_tokenizer = None
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 CHECKPOINT_DIR = Path(".job_cache")
 
@@ -259,6 +267,46 @@ def keyword_match(
 # PASS 2: LLM HOLISTIC ANALYSIS (Slow but thorough)
 # =============================================================================
 
+def _get_mlx_model():
+    """Lazy-load the MLX model and tokenizer."""
+    global _mlx_model, _mlx_tokenizer
+    if _mlx_model is None and USE_MLX_MODEL:
+        try:
+            from mlx_lm import load
+            model_path = MLX_MODEL_PATH or "models/job-matcher-lora/fused_model"
+            logger.info(f"Loading MLX model from {model_path}")
+            _mlx_model, _mlx_tokenizer = load(model_path)
+            logger.info("MLX model loaded successfully")
+        except Exception as e:
+            logger.error(f"Failed to load MLX model: {e}")
+            raise
+    return _mlx_model, _mlx_tokenizer
+
+
+def _mlx_generate(prompt: str, max_tokens: int = 800, temperature: float = 0.3) -> str:
+    """Generate response using MLX model."""
+    model, tokenizer = _get_mlx_model()
+    from mlx_lm import generate
+    from mlx_lm.sample_utils import make_sampler
+    
+    # Format as chat
+    messages = [{"role": "user", "content": prompt}]
+    formatted_prompt = tokenizer.apply_chat_template(
+        messages, add_generation_prompt=True, tokenize=False
+    )
+    
+    # Create sampler with temperature
+    sampler = make_sampler(temp=temperature)
+    
+    response = generate(
+        model, tokenizer,
+        prompt=formatted_prompt,
+        max_tokens=max_tokens,
+        sampler=sampler,
+    )
+    return response
+
+
 def llm_match(
     job_title: str,
     company: str,
@@ -345,19 +393,23 @@ assessment: [2-3 sentence holistic evaluation citing specific job requirements a
 Output ONLY the TOON format above, no other text."""
 
     try:
-        response = requests.post(
-            f"{OLLAMA_BASE_URL}/api/generate",
-            json={
-                "model": FAST_MODEL,
-                "prompt": prompt,
-                "stream": False,
-                "options": {"temperature": 0.3, "num_predict": 800}
-            },
-            timeout=LLM_TIMEOUT
-        )
-        response.raise_for_status()
-        
-        result = response.json().get("response", "").strip()
+        # Use MLX model if configured, otherwise use Ollama
+        if USE_MLX_MODEL:
+            logger.debug("Using MLX model for LLM analysis")
+            result = _mlx_generate(prompt, max_tokens=800)
+        else:
+            response = requests.post(
+                f"{OLLAMA_BASE_URL}/api/generate",
+                json={
+                    "model": FAST_MODEL,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {"temperature": 0.3, "num_predict": 800}
+                },
+                timeout=LLM_TIMEOUT
+            )
+            response.raise_for_status()
+            result = response.json().get("response", "").strip()
         
         # Extract score
         score_match = re.search(r'score:\s*(\d+)%?', result)

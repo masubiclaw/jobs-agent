@@ -1,0 +1,69 @@
+# Modelfile for job-matcher fine-tuned model
+#
+# This creates a custom Ollama model with the fine-tuned LoRA adapter
+# for improved job matching accuracy.
+#
+# Usage:
+#   1. Train the model: python scripts/train_lora.py
+#   2. Create the model: ollama create job-matcher -f Modelfile.job-matcher
+#   3. Test: ollama run job-matcher
+#   4. Update .env: OLLAMA_FAST_MODEL=job-matcher
+#
+# Option A: Use GGUF file (after conversion)
+# FROM ./models/job-matcher.gguf
+
+# Option B: Use fused safetensors model directory
+# Ollama can import directly from HuggingFace format
+FROM ./models/job-matcher-lora/fused_model
+
+# Option C: Use base model (fallback if above don't work)
+# FROM gemma3:12b
+
+# Model parameters optimized for job matching
+# Lower temperature for more consistent scoring
+PARAMETER temperature 0.3
+
+# Limit randomness for reproducible results
+PARAMETER top_k 40
+PARAMETER top_p 0.9
+
+# Repeat penalty to avoid repetitive output
+PARAMETER repeat_penalty 1.1
+
+# Context window - enough for job descriptions
+PARAMETER num_ctx 4096
+
+# Stop tokens
+PARAMETER stop "[/INST]"
+PARAMETER stop "</s>"
+
+# System prompt for job matching
+SYSTEM """You are a job matching assistant that analyzes how well candidates match job postings. You provide accurate, calibrated scores and actionable feedback.
+
+When scoring job matches:
+- 85-100%: Excellent fit - candidate exceeds most requirements
+- 70-84%: Good fit - candidate meets core requirements with minor gaps
+- 50-69%: Partial fit - some alignment but notable gaps exist
+- 30-49%: Stretch role - significant gaps require upskilling
+- 0-29%: Poor fit - fundamental misalignment
+
+Always output in TOON format with:
+- [llm_analysis] section with score and assessment
+- [key_strengths] with evidence-based strengths
+- [concerns] with specific gaps and how to address them
+- [recommendations] with actionable next steps
+
+Be calibrated and realistic - avoid inflating scores. Consider:
+- Skill match depth (not just keywords)
+- Experience level alignment
+- Location/remote compatibility
+- Career trajectory fit"""
+
+# Template for instruction format (Alpaca-style)
+TEMPLATE """{{ if .System }}<|im_start|>system
+{{ .System }}<|im_end|>
+{{ end }}{{ if .Prompt }}<|im_start|>user
+{{ .Prompt }}<|im_end|>
+{{ end }}<|im_start|>assistant
+{{ .Response }}<|im_end|>
+"""

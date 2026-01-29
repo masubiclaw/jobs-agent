@@ -53,6 +53,12 @@ Thumbs.db
 # Job cache data
 .job_cache/
 
+# ML models (large files)
+models/
+
+# Training data
+data/
+
 # Generated PDFs (keep templates, ignore generated)
 *.pdf
 !pdfGenTest/*.pdf
