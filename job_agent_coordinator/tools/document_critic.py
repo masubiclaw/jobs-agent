@@ -20,20 +20,20 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma3:12b")
 LLM_TIMEOUT = 120
 
 # Length constraints
+RESUME_MIN_WORDS = 400  # Resume should have enough content to fill a page
 RESUME_MAX_WORDS = 600
 COVER_LETTER_MIN_WORDS = 200
 COVER_LETTER_MAX_WORDS = 400
 
 # Template artifact patterns that indicate incomplete generation
 # Keep in sync with TEMPLATE_ARTIFACTS in document_generator.py
+# Note: Simple section markers like [OPENING], [DATE] are NOT artifacts - they're valid
 ARTIFACT_PATTERNS = [
-    # Section markers with instructions
-    r'\[OPENING\s*-\s*[^\]]*\]',
-    r'\[BODY PARAGRAPH \d+\s*-\s*[^\]]*\]',
-    r'\[CLOSING\s*-\s*[^\]]*\]',
-    r'\[DATE\]',
-    r'\[RECIPIENT\]',
-    # Placeholder patterns
+    # Section markers WITH instructions (bad - should have been replaced)
+    r'\[OPENING\s+-\s+[^\]]+\]',      # [OPENING - 2-3 sentences, ~50 words]
+    r'\[BODY PARAGRAPH \d+\s+-\s+[^\]]+\]',  # [BODY PARAGRAPH 1 - 3-4 sentences]
+    r'\[CLOSING\s+-\s+[^\]]+\]',      # [CLOSING - 2-3 sentences]
+    # Placeholder patterns (bad - LLM should have filled these in)
     r'\{Current date\}',
     r'\{Company Name\}',
     r'\{Your name\}',
@@ -44,7 +44,7 @@ ARTIFACT_PATTERNS = [
     r'\{[^}]*sentences[^}]*\}',
     r'\{[^}]*words[^}]*\}',
     r'~\d+\s*words?',
-    # Instruction markers
+    # Instruction markers (parenthetical hints)
     r'\(\d+-\d+ sentences[^)]*\)',
 ]
 
@@ -69,6 +69,80 @@ def _check_for_artifacts(content: str) -> Tuple[bool, List[str]]:
     return bool(found), found
 
 
+def _check_for_markdown(content: str) -> Tuple[bool, List[str]]:
+    """
+    Check if content contains markdown formatting that should have been cleaned.
+    
+    Detects:
+    - **bold** and __bold__
+    - *italic* and _italic_ (but not underscores in words)
+    
+    Args:
+        content: Content to check
+    
+    Returns:
+        Tuple of (has_markdown, list of found markdown patterns)
+    """
+    if not content:
+        return False, []
+    
+    found = []
+    
+    # Check for bold markers
+    bold_double = re.findall(r'\*\*[^*]+\*\*', content)
+    bold_under = re.findall(r'__[^_]+__', content)
+    found.extend(bold_double)
+    found.extend(bold_under)
+    
+    # Check for italic markers (standalone, not mid-word underscores)
+    italic_star = re.findall(r'(?<!\*)\*[^*]+\*(?!\*)', content)
+    italic_under = re.findall(r'(?<!\w)_[^_]+_(?!\w)', content)
+    found.extend(italic_star)
+    found.extend(italic_under)
+    
+    return bool(found), found
+
+
+def _check_paragraph_structure(content: str, doc_type: str) -> Tuple[bool, str]:
+    """
+    Check if document has proper paragraph structure.
+    
+    For cover letters, ensures multiple paragraphs exist (not a single block).
+    
+    Args:
+        content: Document content
+        doc_type: "resume" or "cover_letter"
+    
+    Returns:
+        Tuple of (is_valid, feedback message)
+    """
+    if doc_type != "cover_letter":
+        return True, "Structure check only applies to cover letters"
+    
+    if not content:
+        return False, "Cover letter content is empty"
+    
+    # Count paragraphs by looking for section markers or double newlines
+    # Check for section markers
+    has_opening = bool(re.search(r'\[OPENING\]', content, re.IGNORECASE))
+    has_body1 = bool(re.search(r'\[BODY PARAGRAPH 1\]', content, re.IGNORECASE))
+    has_body2 = bool(re.search(r'\[BODY PARAGRAPH 2\]', content, re.IGNORECASE))
+    has_closing = bool(re.search(r'\[CLOSING\]', content, re.IGNORECASE))
+    
+    section_count = sum([has_opening, has_body1, has_body2, has_closing])
+    
+    if section_count >= 3:
+        return True, f"Cover letter has {section_count} sections (good structure)"
+    
+    # Fallback: check for paragraph breaks (double newlines)
+    paragraphs = [p.strip() for p in content.split('\n\n') if p.strip() and len(p.strip()) > 50]
+    
+    if len(paragraphs) >= 3:
+        return True, f"Cover letter has {len(paragraphs)} paragraphs (good structure)"
+    
+    return False, f"Cover letter appears to have only {max(section_count, len(paragraphs))} section(s). Should have at least 3 distinct paragraphs (opening, body, closing)."
+
+
 @dataclass
 class CritiqueResult:
     """Result of document critique."""
@@ -85,10 +159,16 @@ class CritiqueResult:
     passed: bool
     has_artifacts: bool = False
     found_artifacts: Optional[List[str]] = None
+    has_markdown: bool = False
+    found_markdown: Optional[List[str]] = None
+    structure_valid: bool = True
+    structure_feedback: str = ""
     
     def __post_init__(self):
         if self.found_artifacts is None:
             self.found_artifacts = []
+        if self.found_markdown is None:
+            self.found_markdown = []
 
 
 def _call_ollama(prompt: str, temperature: float = 0.1) -> str:
@@ -164,9 +244,11 @@ def _check_length_compliance(content: str, doc_type: str) -> Tuple[bool, str]:
     word_count = len(content.split())
     
     if doc_type == "resume":
+        if word_count < RESUME_MIN_WORDS:
+            return False, f"Resume too short: {word_count} words (min {RESUME_MIN_WORDS}). Add more detail to experience bullets, expand skills, or include additional relevant achievements."
         if word_count > RESUME_MAX_WORDS:
             return False, f"Resume too long: {word_count} words (max {RESUME_MAX_WORDS}). Remove less relevant content."
-        return True, f"Resume length OK: {word_count} words"
+        return True, f"Resume length OK: {word_count} words ({RESUME_MIN_WORDS}-{RESUME_MAX_WORDS} target)"
     
     elif doc_type == "cover_letter":
         if word_count < COVER_LETTER_MIN_WORDS:
@@ -307,6 +389,16 @@ def critique_document(
     if has_artifacts:
         logger.warning(f"Template artifacts found in {doc_type}: {found_artifacts[:3]}")
     
+    # 0b. Check for markdown formatting that should have been cleaned
+    has_markdown, found_markdown = _check_for_markdown(content)
+    if has_markdown:
+        logger.warning(f"Markdown formatting found in {doc_type}: {found_markdown[:3]}")
+    
+    # 0c. Check paragraph structure (for cover letters)
+    structure_valid, structure_feedback = _check_paragraph_structure(content, doc_type)
+    if not structure_valid:
+        logger.warning(f"Structure issue in {doc_type}: {structure_feedback}")
+    
     # 1. Check length compliance
     length_ok, length_feedback = _check_length_compliance(content, doc_type)
     
@@ -376,18 +468,24 @@ Job titles held: {', '.join(set(profile_facts['titles']))}
     suggestions = ats_data.get("suggestions", [])
     if has_artifacts:
         suggestions.insert(0, f"CRITICAL: Remove template artifacts: {', '.join(found_artifacts[:3])}")
+    if has_markdown:
+        suggestions.insert(0, f"CRITICAL: Remove markdown formatting: {', '.join(found_markdown[:3])}. Use plain text only.")
+    if not structure_valid:
+        suggestions.insert(0, f"STRUCTURE: {structure_feedback}")
     if missing_kw:
         suggestions.append(f"Add missing keywords: {', '.join(missing_kw[:5])}")
     if not length_ok:
         suggestions.insert(0, length_feedback)
     
-    # 7. Determine pass/fail (artifacts cause automatic failure)
+    # 7. Determine pass/fail (artifacts and markdown cause automatic failure)
     passed = (
         fact_score >= 100 and
         overall_score >= 75 and
         length_ok and
         not fact_data.get("fabricated_facts") and
-        not has_artifacts
+        not has_artifacts and
+        not has_markdown and
+        structure_valid
     )
     
     return CritiqueResult(
@@ -404,6 +502,10 @@ Job titles held: {', '.join(set(profile_facts['titles']))}
         passed=passed,
         has_artifacts=has_artifacts,
         found_artifacts=found_artifacts,
+        has_markdown=has_markdown,
+        found_markdown=found_markdown,
+        structure_valid=structure_valid,
+        structure_feedback=structure_feedback,
     )
 
 
@@ -413,6 +515,12 @@ def format_critique_feedback(critique: CritiqueResult) -> str:
     
     if critique.has_artifacts:
         feedback_parts.append(f"CRITICAL: Remove template artifacts like {', '.join(critique.found_artifacts[:3])}. Generate actual content, not placeholders.")
+    
+    if critique.has_markdown:
+        feedback_parts.append(f"CRITICAL: Remove markdown formatting like {', '.join(critique.found_markdown[:3])}. Use plain text only, no **bold** or *italic* markers.")
+    
+    if not critique.structure_valid:
+        feedback_parts.append(f"STRUCTURE: {critique.structure_feedback}")
     
     if critique.fabricated_facts:
         feedback_parts.append(f"CRITICAL: Remove fabricated facts: {', '.join(critique.fabricated_facts)}")

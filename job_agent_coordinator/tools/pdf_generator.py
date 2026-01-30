@@ -56,6 +56,39 @@ def _sanitize_filename(name: str) -> str:
     return clean[:50]  # Limit length
 
 
+def _clean_markdown(text: str) -> str:
+    """
+    Remove markdown formatting from text for PDF rendering.
+    
+    Handles:
+    - **bold** and __bold__
+    - *italic* and _italic_
+    - Combined patterns like ***bold italic***
+    
+    Args:
+        text: Text that may contain markdown formatting
+        
+    Returns:
+        Clean text with markdown removed
+    """
+    if not text:
+        return ""
+    
+    # Remove bold markers (** and __)
+    text = re.sub(r'\*\*\*(.+?)\*\*\*', r'\1', text)  # ***bold italic***
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)      # **bold**
+    text = re.sub(r'__(.+?)__', r'\1', text)          # __bold__
+    
+    # Remove italic markers (* and _) - be careful with underscores in words
+    text = re.sub(r'\*(.+?)\*', r'\1', text)          # *italic*
+    text = re.sub(r'(?<!\w)_(.+?)_(?!\w)', r'\1', text)  # _italic_ (not mid-word)
+    
+    # Remove any remaining standalone markers
+    text = text.replace('**', '').replace('__', '')
+    
+    return text.strip()
+
+
 def get_pdf_page_count(pdf_path: str) -> int:
     """
     Get the number of pages in a PDF file.
@@ -111,7 +144,183 @@ def validate_single_page(pdf_path: str) -> Tuple[bool, int, str]:
         return False, -1, f"Validation failed: {e}"
 
 
-def _create_styles() -> Dict[str, ParagraphStyle]:
+# Available space calculations for single-page fitting
+AVAILABLE_WIDTH = PAGE_WIDTH - (2 * MARGIN_SIDE)
+AVAILABLE_HEIGHT = PAGE_HEIGHT - MARGIN_TOP - MARGIN_BOTTOM
+
+# Style adjustment levels for single-page fitting
+# Each level progressively reduces font sizes and spacing to fit more content
+STYLE_ADJUSTMENTS = [
+    # Level 0: Default (normal) - current sizes
+    {
+        "name_size": 16, "contact_size": 9, "section_size": 10,
+        "summary_size": 9, "job_title_size": 9, "job_meta_size": 8,
+        "bullet_size": 8, "skills_size": 8, "education_size": 8,
+        "leading_mult": 1.0, "spacing_mult": 1.0,
+    },
+    # Level 1: Slightly smaller
+    {
+        "name_size": 15, "contact_size": 8.5, "section_size": 9.5,
+        "summary_size": 8.5, "job_title_size": 8.5, "job_meta_size": 7.5,
+        "bullet_size": 7.5, "skills_size": 7.5, "education_size": 7.5,
+        "leading_mult": 0.95, "spacing_mult": 0.9,
+    },
+    # Level 2: Compact
+    {
+        "name_size": 14, "contact_size": 8, "section_size": 9,
+        "summary_size": 8, "job_title_size": 8, "job_meta_size": 7,
+        "bullet_size": 7, "skills_size": 7, "education_size": 7,
+        "leading_mult": 0.9, "spacing_mult": 0.8,
+    },
+    # Level 3: Very compact (minimum readable)
+    {
+        "name_size": 13, "contact_size": 7.5, "section_size": 8.5,
+        "summary_size": 7.5, "job_title_size": 7.5, "job_meta_size": 6.5,
+        "bullet_size": 6.5, "skills_size": 6.5, "education_size": 6.5,
+        "leading_mult": 0.85, "spacing_mult": 0.7,
+    },
+]
+
+
+def _calculate_story_height(story: list, available_width: float = None, available_height: float = None) -> float:
+    """
+    Calculate total height of all flowables in the story before rendering.
+    
+    Uses ReportLab's wrap() method to measure each flowable's height
+    without actually rendering to PDF.
+    
+    Args:
+        story: List of ReportLab flowables (Paragraph, Spacer, HRFlowable, etc.)
+        available_width: Available width for content (defaults to AVAILABLE_WIDTH)
+        available_height: Available height for content (defaults to AVAILABLE_HEIGHT)
+    
+    Returns:
+        Total height in points that the story would occupy
+    """
+    if available_width is None:
+        available_width = AVAILABLE_WIDTH
+    if available_height is None:
+        available_height = AVAILABLE_HEIGHT
+    
+    total_height = 0.0
+    for flowable in story:
+        try:
+            w, h = flowable.wrap(available_width, available_height)
+            total_height += h
+        except Exception as e:
+            # Some flowables may not support wrap() - estimate conservatively
+            logger.debug(f"Could not wrap flowable {type(flowable).__name__}: {e}")
+            total_height += 12  # Default estimate for one line
+    
+    return total_height
+
+
+def _content_fits_page(story: list, margin_buffer: float = 5.0) -> Tuple[bool, float, float]:
+    """
+    Check if content fits on a single page with optional margin buffer.
+    
+    Args:
+        story: List of ReportLab flowables
+        margin_buffer: Extra points of margin to ensure fit (default 5pt)
+    
+    Returns:
+        Tuple of (fits: bool, total_height: float, available_height: float)
+    """
+    total_height = _calculate_story_height(story)
+    target_height = AVAILABLE_HEIGHT - margin_buffer
+    fits = total_height <= target_height
+    return fits, total_height, AVAILABLE_HEIGHT
+
+
+def _trim_content_to_fit(
+    sections: Dict[str, str],
+    styles: Dict[str, ParagraphStyle],
+    profile_name: str = "Candidate",
+    margin_buffer: float = 5.0
+) -> list:
+    """
+    Trim content from sections until the story fits on one page.
+    
+    Trimming strategy (in order of priority):
+    1. Remove bullet points from experience (keep 2-3 per job)
+    2. Shorten skills list
+    3. Reduce education details
+    
+    Args:
+        sections: Parsed resume sections (will be modified in place)
+        styles: Paragraph styles to use
+        profile_name: Candidate name
+        margin_buffer: Extra points of margin to ensure fit
+    
+    Returns:
+        Trimmed story list that fits on one page
+    """
+    max_iterations = 20  # Safety limit to prevent infinite loops
+    iteration = 0
+    
+    # Work with a copy to preserve original
+    trimmed_sections = {k: v for k, v in sections.items()}
+    
+    while iteration < max_iterations:
+        story = _build_resume_story(trimmed_sections, styles, profile_name)
+        fits, total_height, available = _content_fits_page(story, margin_buffer)
+        
+        if fits:
+            logger.info(f"  ✂️ Content trimmed to fit after {iteration} iterations: {total_height:.0f}pt <= {available:.0f}pt")
+            return story
+        
+        iteration += 1
+        overflow = total_height - available
+        logger.debug(f"  ✂️ Trim iteration {iteration}: overflow {overflow:.0f}pt")
+        
+        # Strategy 1: Remove bullet points from experience (from the bottom)
+        if trimmed_sections.get("experience"):
+            exp_lines = trimmed_sections["experience"].split("\n")
+            bullet_indices = [i for i, line in enumerate(exp_lines) 
+                           if line.strip().startswith("-") or line.strip().startswith("•")]
+            
+            if len(bullet_indices) > 6:  # Keep at least 6 bullets total
+                # Remove the last bullet point
+                last_bullet_idx = bullet_indices[-1]
+                exp_lines.pop(last_bullet_idx)
+                trimmed_sections["experience"] = "\n".join(exp_lines)
+                continue
+        
+        # Strategy 2: Shorten skills list (remove from end)
+        if trimmed_sections.get("skills"):
+            skills_text = trimmed_sections["skills"]
+            # Handle both comma-separated and newline-separated
+            if "," in skills_text:
+                skills_list = [s.strip() for s in skills_text.split(",") if s.strip()]
+                if len(skills_list) > 8:  # Keep at least 8 skills
+                    skills_list = skills_list[:-1]
+                    trimmed_sections["skills"] = ", ".join(skills_list)
+                    continue
+            else:
+                skills_lines = [s.strip() for s in skills_text.split("\n") if s.strip()]
+                if len(skills_lines) > 4:  # Keep at least 4 skill lines
+                    skills_lines = skills_lines[:-1]
+                    trimmed_sections["skills"] = "\n".join(skills_lines)
+                    continue
+        
+        # Strategy 3: Shorten summary (remove last sentence)
+        if trimmed_sections.get("summary"):
+            summary = trimmed_sections["summary"]
+            sentences = summary.split(". ")
+            if len(sentences) > 2:  # Keep at least 2 sentences
+                sentences = sentences[:-1]
+                trimmed_sections["summary"] = ". ".join(sentences) + "."
+                continue
+        
+        # If we can't trim anything more, break
+        logger.warning(f"  ⚠️ Cannot trim content further, still {overflow:.0f}pt overflow")
+        break
+    
+    # Return the best we could do
+    return _build_resume_story(trimmed_sections, styles, profile_name)
+
+
+def _create_styles(adjustment: Optional[Dict] = None) -> Dict[str, ParagraphStyle]:
     """
     Create custom paragraph styles for professional, aesthetically pleasing documents.
     
@@ -120,8 +329,28 @@ def _create_styles() -> Dict[str, ParagraphStyle]:
     - Clear visual hierarchy with consistent spacing
     - Professional color palette (black/dark gray)
     - Balanced whitespace for elegant appearance
+    
+    Args:
+        adjustment: Optional dict from STYLE_ADJUSTMENTS to scale font sizes and spacing.
+                   If None, uses default (level 0) sizes.
     """
     styles = getSampleStyleSheet()
+    
+    # Use adjustment values or defaults
+    if adjustment is None:
+        adjustment = STYLE_ADJUSTMENTS[0]
+    
+    name_size = adjustment.get("name_size", 16)
+    contact_size = adjustment.get("contact_size", 9)
+    section_size = adjustment.get("section_size", 10)
+    summary_size = adjustment.get("summary_size", 9)
+    job_title_size = adjustment.get("job_title_size", 9)
+    job_meta_size = adjustment.get("job_meta_size", 8)
+    bullet_size = adjustment.get("bullet_size", 8)
+    skills_size = adjustment.get("skills_size", 8)
+    education_size = adjustment.get("education_size", 8)
+    leading_mult = adjustment.get("leading_mult", 1.0)
+    spacing_mult = adjustment.get("spacing_mult", 1.0)
     
     custom_styles = {
         # =========================
@@ -130,23 +359,23 @@ def _create_styles() -> Dict[str, ParagraphStyle]:
         "Name": ParagraphStyle(
             "Name",
             parent=styles["Heading1"],
-            fontSize=16,
+            fontSize=name_size,
             alignment=TA_CENTER,
-            spaceAfter=4,
+            spaceAfter=int(4 * spacing_mult),
             spaceBefore=0,
             textColor=COLOR_PRIMARY,
             fontName="Helvetica-Bold",
-            leading=18,
+            leading=int(name_size * 1.125 * leading_mult),
         ),
         "ContactInfo": ParagraphStyle(
             "ContactInfo",
             parent=styles["Normal"],
-            fontSize=9,
+            fontSize=contact_size,
             alignment=TA_CENTER,
-            spaceAfter=6,
+            spaceAfter=int(6 * spacing_mult),
             textColor=COLOR_SECONDARY,
             fontName="Helvetica",
-            leading=12,
+            leading=int(contact_size * 1.33 * leading_mult),
         ),
         
         # =========================
@@ -155,12 +384,12 @@ def _create_styles() -> Dict[str, ParagraphStyle]:
         "SectionHeader": ParagraphStyle(
             "SectionHeader",
             parent=styles["Heading2"],
-            fontSize=10,
-            spaceBefore=8,
-            spaceAfter=4,
+            fontSize=section_size,
+            spaceBefore=int(8 * spacing_mult),
+            spaceAfter=int(4 * spacing_mult),
             textColor=COLOR_PRIMARY,
             fontName="Helvetica-Bold",
-            leading=12,
+            leading=int(section_size * 1.2 * leading_mult),
             # Uppercase look achieved by content, not style
             letterSpacing=0.5,
         ),
@@ -171,86 +400,86 @@ def _create_styles() -> Dict[str, ParagraphStyle]:
         "Summary": ParagraphStyle(
             "Summary",
             parent=styles["Normal"],
-            fontSize=9,
+            fontSize=summary_size,
             alignment=TA_JUSTIFY,
-            spaceAfter=6,
-            leading=12,  # Tighter leading for compact layout
+            spaceAfter=int(6 * spacing_mult),
+            leading=int(summary_size * 1.33 * leading_mult),  # Tighter leading for compact layout
             textColor=COLOR_BODY,
             fontName="Helvetica",
         ),
         "JobTitle": ParagraphStyle(
             "JobTitle",
             parent=styles["Normal"],
-            fontSize=9,
+            fontSize=job_title_size,
             fontName="Helvetica-Bold",
-            spaceAfter=1,
+            spaceAfter=int(1 * spacing_mult),
             spaceBefore=0,
             textColor=COLOR_PRIMARY,
-            leading=11,
+            leading=int(job_title_size * 1.22 * leading_mult),
         ),
         "JobCompany": ParagraphStyle(
             "JobCompany",
             parent=styles["Normal"],
-            fontSize=8,
+            fontSize=job_meta_size,
             fontName="Helvetica",
-            spaceAfter=3,
+            spaceAfter=int(3 * spacing_mult),
             textColor=COLOR_SECONDARY,
-            leading=10,
+            leading=int(job_meta_size * 1.25 * leading_mult),
         ),
         "JobDates": ParagraphStyle(
             "JobDates",
             parent=styles["Normal"],
-            fontSize=8,
+            fontSize=job_meta_size,
             fontName="Helvetica-Oblique",
             textColor=COLOR_MUTED,
             alignment=TA_RIGHT,
-            leading=10,
+            leading=int(job_meta_size * 1.25 * leading_mult),
         ),
         "JobMeta": ParagraphStyle(
             "JobMeta",
             parent=styles["Normal"],
-            fontSize=8,
+            fontSize=job_meta_size,
             textColor=COLOR_SECONDARY,
-            spaceAfter=3,
-            leading=10,
+            spaceAfter=int(3 * spacing_mult),
+            leading=int(job_meta_size * 1.25 * leading_mult),
             fontName="Helvetica",
         ),
         "BulletPoint": ParagraphStyle(
             "BulletPoint",
             parent=styles["Normal"],
-            fontSize=8,
+            fontSize=bullet_size,
             leftIndent=10,
             bulletIndent=0,
-            spaceAfter=2,   # Compact bullet spacing
-            leading=11,     # Tighter line height
+            spaceAfter=int(2 * spacing_mult),   # Compact bullet spacing
+            leading=int(bullet_size * 1.375 * leading_mult),     # Tighter line height
             textColor=COLOR_BODY,
             fontName="Helvetica",
         ),
         "Skills": ParagraphStyle(
             "Skills",
             parent=styles["Normal"],
-            fontSize=8,
-            spaceAfter=4,
-            leading=11,  # Compact line height
+            fontSize=skills_size,
+            spaceAfter=int(4 * spacing_mult),
+            leading=int(skills_size * 1.375 * leading_mult),  # Compact line height
             textColor=COLOR_BODY,
             fontName="Helvetica",
         ),
         "Education": ParagraphStyle(
             "Education",
             parent=styles["Normal"],
-            fontSize=8,
-            spaceAfter=3,
-            leading=11,
+            fontSize=education_size,
+            spaceAfter=int(3 * spacing_mult),
+            leading=int(education_size * 1.375 * leading_mult),
             textColor=COLOR_BODY,
             fontName="Helvetica",
         ),
         "EducationTitle": ParagraphStyle(
             "EducationTitle",
             parent=styles["Normal"],
-            fontSize=8,
+            fontSize=education_size,
             fontName="Helvetica-Bold",
-            spaceAfter=2,
-            leading=10,
+            spaceAfter=int(2 * spacing_mult),
+            leading=int(education_size * 1.25 * leading_mult),
             textColor=COLOR_PRIMARY,
         ),
         
@@ -491,6 +720,159 @@ def _parse_cover_letter_sections(content: str) -> Dict[str, str]:
     return sections
 
 
+def _build_resume_story(sections: Dict[str, str], styles: Dict[str, ParagraphStyle], profile_name: str = "Candidate") -> list:
+    """
+    Build the story (list of flowables) for a resume PDF.
+    
+    Separated from generate_resume_pdf to allow pre-calculation of height
+    before actual PDF generation.
+    
+    Args:
+        sections: Parsed resume sections from _parse_resume_sections()
+        styles: Paragraph styles from _create_styles()
+        profile_name: Candidate name (fallback if not in sections)
+    
+    Returns:
+        List of ReportLab flowables
+    """
+    story = []
+    
+    # =========================
+    # HEADER: Name & Contact
+    # =========================
+    header_lines = sections.get("header", "").split("\n")
+    if header_lines:
+        # First line is name - large and prominent (clean markdown like **Name**)
+        name = _clean_markdown(header_lines[0]) if header_lines else profile_name
+        story.append(Paragraph(name, styles["Name"]))
+        
+        # Contact info - elegant single line with separators
+        if len(header_lines) > 1:
+            contact_parts = [_clean_markdown(line) for line in header_lines[1:] if line.strip()]
+            contact = "  •  ".join(contact_parts)  # Use bullet separators
+            story.append(Paragraph(contact, styles["ContactInfo"]))
+    
+    # Elegant separator line
+    story.append(Spacer(1, 2))
+    story.append(HRFlowable(
+        width="100%", 
+        thickness=1, 
+        color=COLOR_PRIMARY,
+        spaceBefore=0,
+        spaceAfter=4
+    ))
+    
+    # =========================
+    # PROFESSIONAL SUMMARY
+    # =========================
+    if sections.get("summary"):
+        story.extend(_create_section_header("Professional Summary", styles))
+        summary_text = _clean_markdown(sections["summary"].replace("\n", " "))
+        story.append(Paragraph(summary_text, styles["Summary"]))
+    
+    # =========================
+    # SKILLS
+    # =========================
+    if sections.get("skills"):
+        story.extend(_create_section_header("Skills", styles))
+        # Format skills with elegant separators
+        skills_lines = sections["skills"].split("\n")
+        skills_list = []
+        for line in skills_lines:
+            line = _clean_markdown(line.strip().lstrip("-•"))
+            if line:
+                skills_list.append(line)
+        skills_text = "  •  ".join(skills_list) if skills_list else _clean_markdown(sections["skills"])
+        story.append(Paragraph(skills_text, styles["Skills"]))
+    
+    # =========================
+    # EXPERIENCE
+    # =========================
+    if sections.get("experience"):
+        story.extend(_create_section_header("Experience", styles))
+        
+        exp_lines = sections["experience"].split("\n")
+        is_first_job = True
+        
+        for line in exp_lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Job title/company line (contains | for separation)
+            if "|" in line and not line.startswith("-") and not line.startswith("•"):
+                parts = [_clean_markdown(p.strip()) for p in line.split("|")]
+                
+                if len(parts) >= 3:
+                    # Format: Title | Company | Dates
+                    title = parts[0]
+                    company_name = parts[1]
+                    dates = parts[2] if len(parts) > 2 else ""
+                    
+                    # Add spacing between jobs (compact for single page)
+                    if is_first_job:
+                        is_first_job = False
+                    else:
+                        story.append(Spacer(1, 6))  # Compact visual separation between jobs
+                    
+                    story.append(Paragraph(f"<b>{title}</b>", styles["JobTitle"]))
+                    if dates:
+                        story.append(Paragraph(
+                            f"{company_name}  |  <i>{dates}</i>", 
+                            styles["JobMeta"]
+                        ))
+                    else:
+                        story.append(Paragraph(company_name, styles["JobCompany"]))
+                elif len(parts) == 2:
+                    title = parts[0]
+                    rest = parts[1]
+                    if is_first_job:
+                        is_first_job = False
+                    else:
+                        story.append(Spacer(1, 6))
+                    story.append(Paragraph(f"<b>{title}</b>", styles["JobTitle"]))
+                    story.append(Paragraph(rest, styles["JobMeta"]))
+                else:
+                    story.append(Paragraph(f"<b>{_clean_markdown(line)}</b>", styles["JobTitle"]))
+                    
+            elif line.startswith("-") or line.startswith("•"):
+                # Bullet points - achievements (already formatted)
+                bullet = _clean_markdown(line.lstrip("-•").strip())
+                if bullet:
+                    story.append(Paragraph(f"•  {bullet}", styles["BulletPoint"]))
+            else:
+                # Treat any other experience content as a bullet point
+                # (LLM may not have properly prefixed it)
+                clean_line = _clean_markdown(line.strip())
+                if clean_line:
+                    story.append(Paragraph(f"•  {clean_line}", styles["BulletPoint"]))
+    
+    # =========================
+    # EDUCATION
+    # =========================
+    if sections.get("education"):
+        story.extend(_create_section_header("Education", styles))
+        is_first_edu = True
+        for line in sections["education"].split("\n"):
+            line = _clean_markdown(line)
+            if line:
+                # Add spacing between education entries
+                if not is_first_edu and "|" in line:
+                    story.append(Spacer(1, 4))
+                is_first_edu = False
+                
+                # Check if it's a degree line (often contains comma or dash)
+                if "|" in line:
+                    parts = line.split("|")
+                    degree = _clean_markdown(parts[0])
+                    rest = " | ".join([_clean_markdown(p) for p in parts[1:]])
+                    story.append(Paragraph(f"<b>{degree}</b>  |  {rest}", styles["Education"]))
+                else:
+                    story.append(Paragraph(line, styles["Education"]))
+    
+    return story
+
+
 def generate_resume_pdf(
     content: str,
     company: str,
@@ -498,14 +880,18 @@ def generate_resume_pdf(
     output_dir: Optional[Path] = None
 ) -> str:
     """
-    Generate an aesthetically pleasing PDF resume.
+    Generate an aesthetically pleasing PDF resume with automatic single-page fitting.
     
     Design features:
     - Clean, modern typography (Helvetica family)
     - Clear visual hierarchy with section headers and subtle rules
     - Professional color palette (black/gray tones)
     - Balanced whitespace for elegant, readable layout
-    - Strictly single page
+    - Automatic style adjustment to ensure single-page fit
+    
+    The function iteratively tries smaller font sizes and tighter spacing
+    until content fits on exactly one page. If style adjustments aren't enough,
+    content is trimmed as a last resort.
     
     Args:
         content: Resume content (from document generator)
@@ -528,6 +914,44 @@ def generate_resume_pdf(
     filepath = output_dir / filename
     logger.info(f"  Output file: {filepath}")
     
+    # Parse content into sections (do this once)
+    sections = _parse_resume_sections(content)
+    
+    # Try each style adjustment level until content fits
+    selected_level = 0
+    selected_styles = None
+    selected_story = None
+    
+    for level, adjustment in enumerate(STYLE_ADJUSTMENTS):
+        styles = _create_styles(adjustment)
+        story = _build_resume_story(sections, styles, profile_name)
+        
+        # Calculate height before building
+        fits, total_height, available = _content_fits_page(story)
+        
+        if fits:
+            logger.info(f"  ✅ Content fits at style level {level}: {total_height:.0f}pt <= {available:.0f}pt")
+            selected_level = level
+            selected_styles = styles
+            selected_story = story
+            break
+        else:
+            overflow = total_height - available
+            logger.info(f"  📏 Level {level}: {total_height:.0f}pt > {available:.0f}pt (overflow: {overflow:.0f}pt), trying smaller styles...")
+    else:
+        # None of the style levels fit - try content trimming with smallest styles
+        logger.info(f"  ✂️ Style adjustments insufficient, attempting content trimming...")
+        selected_level = len(STYLE_ADJUSTMENTS) - 1
+        selected_styles = _create_styles(STYLE_ADJUSTMENTS[-1])
+        selected_story = _trim_content_to_fit(sections, selected_styles, profile_name)
+        
+        # Check if trimming worked
+        fits, total_height, available = _content_fits_page(selected_story)
+        if fits:
+            logger.info(f"  ✅ Content fits after trimming: {total_height:.0f}pt <= {available:.0f}pt")
+        else:
+            logger.warning(f"  ⚠️ Content still doesn't fit after trimming: {total_height:.0f}pt > {available:.0f}pt")
+    
     # Create document with optimized margins for single page
     doc = SimpleDocTemplate(
         str(filepath),
@@ -538,186 +962,17 @@ def generate_resume_pdf(
         bottomMargin=MARGIN_BOTTOM,
     )
     
-    styles = _create_styles()
-    story = []
-    
-    # Parse content into sections
-    sections = _parse_resume_sections(content)
-    
-    # =========================
-    # HEADER: Name & Contact
-    # =========================
-    logger.info("  🔹 Rendering HEADER section...")
-    header_lines = sections.get("header", "").split("\n")
-    if header_lines:
-        # First line is name - large and prominent
-        name = header_lines[0].strip() if header_lines else profile_name
-        logger.debug(f"    Name: {name}")
-        story.append(Paragraph(name, styles["Name"]))
-        
-        # Contact info - elegant single line with separators
-        if len(header_lines) > 1:
-            contact_parts = [line.strip() for line in header_lines[1:] if line.strip()]
-            contact = "  •  ".join(contact_parts)  # Use bullet separators
-            logger.debug(f"    Contact: {contact[:50]}...")
-            story.append(Paragraph(contact, styles["ContactInfo"]))
-    
-    # Elegant separator line
-    story.append(Spacer(1, 2))
-    story.append(HRFlowable(
-        width="100%", 
-        thickness=1, 
-        color=COLOR_PRIMARY,
-        spaceBefore=0,
-        spaceAfter=4
-    ))
-    
-    # =========================
-    # PROFESSIONAL SUMMARY
-    # =========================
-    if sections.get("summary"):
-        logger.info("  🔹 Rendering SUMMARY section...")
-        story.extend(_create_section_header("Professional Summary", styles))
-        summary_text = sections["summary"].replace("\n", " ").strip()
-        logger.debug(f"    Summary: {summary_text[:80]}...")
-        story.append(Paragraph(summary_text, styles["Summary"]))
-    else:
-        logger.warning("  ⚠️ No SUMMARY section found")
-    
-    # =========================
-    # SKILLS
-    # =========================
-    if sections.get("skills"):
-        logger.info("  🔹 Rendering SKILLS section...")
-        story.extend(_create_section_header("Skills", styles))
-        # Format skills with elegant separators
-        skills_lines = sections["skills"].split("\n")
-        skills_list = []
-        for line in skills_lines:
-            line = line.strip().lstrip("-•").strip()
-            if line:
-                skills_list.append(line)
-        skills_text = "  •  ".join(skills_list) if skills_list else sections["skills"]
-        logger.debug(f"    Skills count: {len(skills_list)}")
-        story.append(Paragraph(skills_text, styles["Skills"]))
-    else:
-        logger.warning("  ⚠️ No SKILLS section found")
-    
-    # =========================
-    # EXPERIENCE
-    # =========================
-    if sections.get("experience"):
-        logger.info("  🔹 Rendering EXPERIENCE section...")
-        story.extend(_create_section_header("Experience", styles))
-        
-        exp_lines = sections["experience"].split("\n")
-        is_first_job = True
-        job_count = 0
-        bullet_count = 0
-        
-        def clean_markdown(text: str) -> str:
-            """Remove markdown bold markers from text."""
-            return text.replace("**", "").replace("*", "").strip()
-        
-        for line in exp_lines:
-            line = line.strip()
-            if not line:
-                continue
-            
-            # Job title/company line (contains | for separation)
-            if "|" in line and not line.startswith("-") and not line.startswith("•"):
-                parts = [clean_markdown(p.strip()) for p in line.split("|")]
-                
-                if len(parts) >= 3:
-                    # Format: Title | Company | Dates
-                    title = parts[0]
-                    company_name = parts[1]
-                    dates = parts[2] if len(parts) > 2 else ""
-                    
-                    # Add spacing between jobs (compact for single page)
-                    if is_first_job:
-                        is_first_job = False
-                    else:
-                        story.append(Spacer(1, 6))  # Compact visual separation between jobs
-                    
-                    job_count += 1
-                    logger.debug(f"    Job {job_count}: {title} at {company_name}")
-                    story.append(Paragraph(f"<b>{title}</b>", styles["JobTitle"]))
-                    if dates:
-                        story.append(Paragraph(
-                            f"{company_name}  |  <i>{dates}</i>", 
-                            styles["JobMeta"]
-                        ))
-                    else:
-                        story.append(Paragraph(company_name, styles["JobCompany"]))
-                elif len(parts) == 2:
-                    title = parts[0]
-                    rest = parts[1]
-                    if is_first_job:
-                        is_first_job = False
-                    else:
-                        story.append(Spacer(1, 6))
-                    job_count += 1
-                    logger.debug(f"    Job {job_count}: {title}")
-                    story.append(Paragraph(f"<b>{title}</b>", styles["JobTitle"]))
-                    story.append(Paragraph(rest, styles["JobMeta"]))
-                else:
-                    story.append(Paragraph(f"<b>{clean_markdown(line)}</b>", styles["JobTitle"]))
-                    
-            elif line.startswith("-") or line.startswith("•"):
-                # Bullet points - achievements
-                bullet = line.lstrip("-•").strip()
-                bullet_count += 1
-                story.append(Paragraph(f"•  {bullet}", styles["BulletPoint"]))
-            else:
-                # Fallback for non-standard formatting
-                story.append(Paragraph(clean_markdown(line), styles["JobMeta"]))
-        
-        logger.info(f"    Rendered {job_count} jobs with {bullet_count} bullet points")
-    else:
-        logger.warning("  ⚠️ No EXPERIENCE section found")
-    
-    # =========================
-    # EDUCATION
-    # =========================
-    if sections.get("education"):
-        logger.info("  🔹 Rendering EDUCATION section...")
-        story.extend(_create_section_header("Education", styles))
-        is_first_edu = True
-        edu_count = 0
-        for line in sections["education"].split("\n"):
-            line = line.strip()
-            if line:
-                # Add spacing between education entries
-                if not is_first_edu and "|" in line:
-                    story.append(Spacer(1, 4))
-                is_first_edu = False
-                
-                # Check if it's a degree line (often contains comma or dash)
-                if "|" in line:
-                    parts = line.split("|")
-                    degree = parts[0].strip()
-                    rest = " | ".join(parts[1:]).strip()
-                    edu_count += 1
-                    logger.debug(f"    Education {edu_count}: {degree}")
-                    story.append(Paragraph(f"<b>{degree}</b>  |  {rest}", styles["Education"]))
-                else:
-                    story.append(Paragraph(line, styles["Education"]))
-        logger.info(f"    Rendered {edu_count} education entries")
-    else:
-        logger.warning("  ⚠️ No EDUCATION section found")
-    
     # Build PDF
-    logger.info(f"  📄 Building PDF with {len(story)} elements...")
+    logger.info(f"  📄 Building PDF with {len(selected_story)} elements at style level {selected_level}...")
     try:
-        doc.build(story)
+        doc.build(selected_story)
         
         # Validate single page
         is_single, page_count, msg = validate_single_page(str(filepath))
         if is_single:
-            logger.info(f"✅ Generated resume PDF: {filepath} (1 page)")
+            logger.info(f"✅ Generated resume PDF: {filepath} (1 page, style level {selected_level})")
         else:
-            logger.warning(f"⚠️ Resume exceeds 1 page: {filepath} ({page_count} pages)")
+            logger.warning(f"⚠️ Resume exceeds 1 page: {filepath} ({page_count} pages) - content trimming may be needed")
         
         return str(filepath)
     except Exception as e:
@@ -779,14 +1034,15 @@ def generate_cover_letter_pdf(
     sections = _parse_cover_letter_sections(content)
     
     # =========================
-    # SENDER INFO (optional header)
+    # SENDER INFO (header with name and contact)
     # =========================
     if profile_name and profile_name != "Candidate":
-        story.append(Paragraph(profile_name, styles["CLName"]))
-        if contact_info:
-            story.append(Paragraph(contact_info, styles["CLContact"]))
-        else:
-            story.append(Spacer(1, 8))
+        story.append(Paragraph(_clean_markdown(profile_name), styles["CLName"]))
+    if contact_info:
+        # Contact info prominently displayed below name
+        story.append(Paragraph(_clean_markdown(contact_info), styles["CLContact"]))
+    elif profile_name and profile_name != "Candidate":
+        story.append(Spacer(1, 8))
     
     # =========================
     # DATE
@@ -824,21 +1080,21 @@ def generate_cover_letter_pdf(
     # Opening paragraph
     if opening_text:
         story.append(Paragraph(
-            opening_text.replace("\n", " ").strip(), 
+            _clean_markdown(opening_text.replace("\n", " ")), 
             styles["BodyParagraph"]
         ))
     
     # Body paragraph 1
     if sections.get("body1"):
         story.append(Paragraph(
-            sections["body1"].replace("\n", " ").strip(), 
+            _clean_markdown(sections["body1"].replace("\n", " ")), 
             styles["BodyParagraph"]
         ))
     
     # Body paragraph 2
     if sections.get("body2"):
         story.append(Paragraph(
-            sections["body2"].replace("\n", " ").strip(), 
+            _clean_markdown(sections["body2"].replace("\n", " ")), 
             styles["BodyParagraph"]
         ))
     
@@ -846,7 +1102,7 @@ def generate_cover_letter_pdf(
     # CLOSING
     # =========================
     if sections.get("closing"):
-        closing_text = sections["closing"].replace("\n", " ").strip()
+        closing_text = _clean_markdown(sections["closing"].replace("\n", " "))
         # Check if closing includes "Sincerely" or similar
         if not any(word in closing_text.lower() for word in ["sincerely", "regards", "best"]):
             story.append(Paragraph(closing_text, styles["BodyParagraph"]))
@@ -861,7 +1117,7 @@ def generate_cover_letter_pdf(
     # SIGNATURE
     # =========================
     story.append(Spacer(1, 18))
-    story.append(Paragraph(profile_name, styles["Signature"]))
+    story.append(Paragraph(_clean_markdown(profile_name), styles["Signature"]))
     
     # Build PDF
     try:

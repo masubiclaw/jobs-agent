@@ -15,13 +15,8 @@ from typing import Dict, Any, Optional, List, Tuple
 logger = logging.getLogger(__name__)
 
 # Template artifact patterns that should be removed from generated content
+# Note: Simple section markers like [OPENING], [DATE] are PRESERVED for PDF parsing
 TEMPLATE_ARTIFACTS = [
-    # Section markers with instructions
-    r'\[OPENING\s*-\s*[^\]]*\]',
-    r'\[BODY PARAGRAPH \d+\s*-\s*[^\]]*\]',
-    r'\[CLOSING\s*-\s*[^\]]*\]',
-    r'\[DATE\]',
-    r'\[RECIPIENT\]',
     # Placeholder patterns
     r'\{Current date\}',
     r'\{Company Name\}',
@@ -33,8 +28,18 @@ TEMPLATE_ARTIFACTS = [
     r'\{[^}]*sentences[^}]*\}',
     r'\{[^}]*words[^}]*\}',
     r'~\d+\s*words?',
-    # Instruction markers
+    # Instruction markers (parenthetical hints)
     r'\(\d+-\d+ sentences[^)]*\)',
+]
+
+# Section markers with instructions - replace with simple markers (for PDF parsing)
+SECTION_MARKER_REPLACEMENTS = [
+    # [OPENING - 2-3 sentences, ~50 words] -> [OPENING]
+    (r'\[OPENING\s*-\s*[^\]]*\]', '[OPENING]'),
+    # [BODY PARAGRAPH 1 - 3-4 sentences] -> [BODY PARAGRAPH 1]
+    (r'\[BODY PARAGRAPH (\d+)\s*-\s*[^\]]*\]', r'[BODY PARAGRAPH \1]'),
+    # [CLOSING - 2-3 sentences] -> [CLOSING]
+    (r'\[CLOSING\s*-\s*[^\]]*\]', '[CLOSING]'),
 ]
 
 
@@ -42,17 +47,26 @@ def _clean_template_artifacts(content: str) -> str:
     """
     Remove template artifacts and instruction markers from generated content.
     
+    Preserves simple section markers like [OPENING], [BODY PARAGRAPH 1], [CLOSING]
+    which are needed for PDF parsing. Only removes instructional text within markers.
+    
     Args:
         content: Raw LLM-generated content (handles None/empty gracefully)
     
     Returns:
-        Cleaned content with artifacts removed
+        Cleaned content with artifacts removed but section markers preserved
     """
     if not content:
         return ""
     
     cleaned = content
     
+    # First, replace section markers with instructions -> simple markers
+    # e.g., [OPENING - 2-3 sentences, ~50 words] -> [OPENING]
+    for pattern, replacement in SECTION_MARKER_REPLACEMENTS:
+        cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
+    
+    # Then remove pure artifacts (placeholders, hints)
     for pattern in TEMPLATE_ARTIFACTS:
         cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE)
     
@@ -69,7 +83,14 @@ def _clean_template_artifacts(content: str) -> str:
 
 def has_template_artifacts(content: str) -> Tuple[bool, List[str]]:
     """
-    Check if content contains template artifacts.
+    Check if content contains template artifacts that indicate incomplete generation.
+    
+    Checks for:
+    - Placeholder patterns like {Current date}, {Company Name}
+    - Section markers WITH instructions like [OPENING - 2-3 sentences]
+    
+    Does NOT flag:
+    - Simple section markers like [OPENING], [DATE] which are valid for PDF parsing
     
     Args:
         content: Content to check (handles None/empty gracefully)
@@ -81,9 +102,17 @@ def has_template_artifacts(content: str) -> Tuple[bool, List[str]]:
         return False, []
     
     found = []
+    
+    # Check for placeholder patterns
     for pattern in TEMPLATE_ARTIFACTS:
         matches = re.findall(pattern, content, flags=re.IGNORECASE)
         found.extend(matches)
+    
+    # Check for section markers WITH instructions (should have been replaced)
+    for pattern, _ in SECTION_MARKER_REPLACEMENTS:
+        matches = re.findall(pattern, content, flags=re.IGNORECASE)
+        found.extend(matches)
+    
     return bool(found), found
 
 
@@ -197,11 +226,38 @@ STRICT RULES - FACTS:
 5. Tailor presentation of EXISTING facts to match job requirements
 
 STRICT RULES - LENGTH (CRITICAL):
-6. Resume MUST fit on exactly 1 page (~500-600 words max)
-7. Include only 3-4 most relevant roles
-8. Keep bullet points to 2-3 per role, prioritize impact/metrics
-9. Skills section: top 10-15 most relevant skills only
-10. No filler words or unnecessary phrases
+6. Resume MUST be 400-600 words to fill exactly 1 page - NOT too short, NOT too long
+7. Include 3-4 most relevant roles with achievement bullets
+8. Each role needs 3-4 bullet points with specific accomplishments and metrics
+9. Skills section: 12-18 relevant skills to demonstrate breadth
+
+STRICT RULES - BULLET POINT FORMAT (CRITICAL):
+10. EVERY achievement under each job MUST start with "- " (dash followed by space)
+11. Do NOT write experience as plain paragraphs - ALWAYS use bullet points
+12. Each bullet point should be on its own line, starting with "- "
+
+STRICT RULES - WRITING STYLE (NO FLUFF):
+13. Start EVERY bullet with a strong ACTION VERB (Built, Led, Designed, Implemented, Reduced, etc.)
+14. NO fluff words: avoid "responsible for", "helped with", "worked on", "assisted in", "various", "multiple"
+15. NO filler phrases: avoid "in order to", "was able to", "successfully", "effectively"
+16. Be DIRECT and SPECIFIC - state what you DID and the RESULT
+17. Include metrics/numbers when available (%, $, time saved, users impacted)
+18. Maximum 12-15 words per bullet - be concise
+
+GOOD BULLET EXAMPLES:
+- Built ML pipeline processing 10M daily events, reducing latency 40%
+- Led 5-engineer team delivering auth service 2 weeks early
+- Designed REST API serving 50K requests/sec with 99.9% uptime
+
+BAD BULLET EXAMPLES (AVOID):
+- Was responsible for helping to build various machine learning pipelines
+- Worked on multiple projects related to authentication services
+- Successfully assisted in the development of API infrastructure
+
+CONTENT DENSITY:
+- Summary: 2-3 impactful sentences (40-60 words) - direct, no fluff
+- Each bullet: 10-15 words, action verb + accomplishment + metric
+- Skills: Technical skills relevant to job, no soft skill padding
 
 OUTPUT FORMAT (follow exactly):
 [HEADER]
@@ -209,18 +265,24 @@ OUTPUT FORMAT (follow exactly):
 {email} | {phone} | {location}
 
 [SUMMARY]
-{2-3 sentences tailored to job, 50-75 words max}
+{3-4 sentences tailored to job, 60-80 words}
 
 [SKILLS]
-{Comma-separated list of 10-15 relevant skills}
+{Comma-separated list of 12-18 relevant skills}
 
 [EXPERIENCE]
 {Title} | {Company} | {Start Date} - {End Date}
-- {Achievement bullet with metric if available}
-- {Achievement bullet with metric if available}
-- {Achievement bullet with metric if available}
+- {Achievement bullet with action verb and metric, 15-25 words}
+- {Achievement bullet with action verb and metric, 15-25 words}
+- {Achievement bullet with action verb and metric, 15-25 words}
+- {Achievement bullet with action verb and metric, 15-25 words}
 
-{Repeat for 2-3 more roles}
+{Title} | {Company} | {Start Date} - {End Date}
+- {Achievement bullet with action verb and metric, 15-25 words}
+- {Achievement bullet with action verb and metric, 15-25 words}
+- {Achievement bullet with action verb and metric, 15-25 words}
+
+{Repeat for 1-2 more roles with 3-4 bullets each}
 
 [EDUCATION]
 {Degree}, {Institution}, {Year}
@@ -241,6 +303,16 @@ STRICT RULES - LENGTH (CRITICAL):
 7. Every sentence must add value - be direct and specific
 8. Focus on 2-3 key qualifications that match the job
 
+STRICT RULES - MOTIVATION:
+9. In the OPENING, express genuine motivation for WHY you're interested in THIS COMPANY
+10. Connect the company's mission, products, or values to your background/interests
+11. Do NOT use generic phrases - be specific about what draws you to the company
+
+STRICT RULES - CONTACT INFO:
+12. Do NOT include email, phone, or address in the letter body
+13. Contact info will be added as a header separately
+14. Do NOT sign off with contact information
+
 OUTPUT FORMAT (follow exactly):
 [DATE]
 {Current date}
@@ -250,7 +322,7 @@ Hiring Manager
 {Company Name}
 
 [OPENING - 2-3 sentences, ~50 words]
-{Direct statement about the position and your single strongest qualification}
+{Express genuine motivation for this company + your single strongest qualification}
 
 [BODY PARAGRAPH 1 - 3-4 sentences, ~75 words]
 {Your most relevant experience mapped to top job requirement, with specific metric}
@@ -259,7 +331,7 @@ Hiring Manager
 {Second key strength with specific achievement from profile}
 
 [CLOSING - 2-3 sentences, ~50 words]
-{Enthusiasm, availability, call to action}
+{Brief enthusiasm, availability, call to action - NO contact info here}
 
 {Your name}
 """
@@ -297,7 +369,7 @@ FEEDBACK FROM PREVIOUS ATTEMPT (address these issues):
 
 {job_text}
 {feedback_section}
-Generate the resume now. Remember: 1 page max, only facts from the profile, tailored to the job.
+Generate the resume now. Remember: 400-600 words to fill exactly 1 page, only facts from the profile, tailored to the job. Be detailed, not sparse.
 """
     
     logger.info(f"Generating resume for {job.get('title', 'Unknown')} at {job.get('company', 'Unknown')}")

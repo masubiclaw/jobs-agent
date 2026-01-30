@@ -148,7 +148,8 @@ def generate_resume(job_id: str, profile_id: str = "") -> str:
     Generate a tailored resume PDF for a specific job.
     
     Uses iterative refinement with LLM generation and critique until quality
-    thresholds are met (or max iterations reached).
+    thresholds are met (or max iterations reached). If the PDF exceeds one page,
+    the content is regenerated with feedback to be more concise.
     
     Args:
         job_id: ID of the job to generate resume for
@@ -165,18 +166,52 @@ def generate_resume(job_id: str, profile_id: str = "") -> str:
         
         logger.info(f"Generating resume for {job_title} at {company}")
         
-        # Run generation loop
-        content, critique = _run_generation_loop("resume", profile, job)
+        # Page fitting loop - regenerate if not single page
+        max_page_attempts = 3
+        content = None
+        critique = None
+        pdf_path = None
+        is_single_page = False
+        page_count = 0
+        page_feedback = None
         
-        # Generate PDF
-        pdf_path = generate_resume_pdf(
-            content,
-            company,
-            profile.get("name", "Candidate")
-        )
-        
-        # Validate single page
-        is_single_page, page_count, page_msg = validate_single_page(pdf_path)
+        for page_attempt in range(max_page_attempts):
+            # Run generation loop (with page feedback if not first attempt)
+            if page_feedback:
+                logger.info(f"Page fitting attempt {page_attempt + 1}: regenerating with length feedback")
+                # Generate with page fitting feedback
+                gen_result = generate_resume_content(profile, job, feedback=page_feedback)
+                content = gen_result["content"]
+                # Critique the new content
+                critique = critique_document(content, "resume", profile, job)
+            else:
+                content, critique = _run_generation_loop("resume", profile, job)
+            
+            # Generate PDF
+            pdf_path = generate_resume_pdf(
+                content,
+                company,
+                profile.get("name", "Candidate")
+            )
+            
+            # Validate single page
+            is_single_page, page_count, page_msg = validate_single_page(pdf_path)
+            
+            if is_single_page:
+                logger.info(f"Resume fits on single page (attempt {page_attempt + 1})")
+                break
+            else:
+                logger.warning(f"Resume has {page_count} pages (attempt {page_attempt + 1}), regenerating...")
+                page_feedback = (
+                    f"CRITICAL: The generated resume is {page_count} pages but MUST be exactly 1 page. "
+                    f"REDUCE content significantly:\n"
+                    f"- Use shorter bullet points (max 15-20 words each)\n"
+                    f"- Keep only 2-3 bullet points per job\n"
+                    f"- Remove less impactful achievements\n"
+                    f"- Use concise language, avoid redundancy\n"
+                    f"- Limit skills to 10-12 most relevant\n"
+                    f"- Keep summary to 2 sentences maximum"
+                )
         
         # Format response
         result = f"""[resume_generation]
@@ -184,6 +219,7 @@ status: {'success' if critique.passed and is_single_page else 'completed_with_wa
 pdf_path: {pdf_path}
 job_title: {job_title}
 company: {company}
+page_fitting_attempts: {page_attempt + 1}
 
 [quality_scores]
 fact_verification: {critique.fact_score}%
@@ -204,7 +240,7 @@ fabricated_facts: {len(critique.fabricated_facts)}
         if critique.fabricated_facts:
             warnings.append(f"fabricated_facts: {', '.join(critique.fabricated_facts)}")
         if not is_single_page:
-            warnings.append(f"multi_page: Resume has {page_count} pages (should be 1)")
+            warnings.append(f"multi_page: Resume has {page_count} pages after {max_page_attempts} attempts (should be 1)")
         
         if warnings:
             result += "\n[warnings]\n" + "\n".join(warnings)
@@ -246,11 +282,20 @@ def generate_cover_letter(job_id: str, profile_id: str = "") -> str:
         # Run generation loop
         content, critique = _run_generation_loop("cover_letter", profile, job)
         
+        # Build contact info from profile (email and phone for header)
+        contact_parts = []
+        if profile.get("email"):
+            contact_parts.append(profile["email"])
+        if profile.get("phone"):
+            contact_parts.append(profile["phone"])
+        contact_info = "  |  ".join(contact_parts) if contact_parts else ""
+        
         # Generate PDF
         pdf_path = generate_cover_letter_pdf(
             content,
             company,
-            profile.get("name", "Candidate")
+            profile.get("name", "Candidate"),
+            contact_info=contact_info
         )
         
         # Format response

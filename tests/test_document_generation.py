@@ -62,6 +62,7 @@ def _check_for_artifacts(content: str) -> tuple:
 
 
 # Length constraints
+RESUME_MIN_WORDS = 400
 RESUME_MAX_WORDS = 600
 COVER_LETTER_MIN_WORDS = 200
 COVER_LETTER_MAX_WORDS = 400
@@ -72,6 +73,8 @@ def _check_length_compliance(content: str, doc_type: str) -> tuple:
     word_count = len(content.split())
     
     if doc_type == "resume":
+        if word_count < RESUME_MIN_WORDS:
+            return False, f"Resume too short: {word_count} words (min {RESUME_MIN_WORDS}). Add more detail."
         if word_count > RESUME_MAX_WORDS:
             return False, f"Resume too long: {word_count} words (max {RESUME_MAX_WORDS}). Remove less relevant content."
         return True, f"Resume length OK: {word_count} words"
@@ -272,6 +275,13 @@ class TestLengthCompliance:
         assert ok is False
         assert "too long" in msg.lower()
     
+    def test_resume_too_short(self):
+        """Test resume below minimum word count."""
+        content = "word " * 200
+        ok, msg = _check_length_compliance(content, "resume")
+        assert ok is False
+        assert "too short" in msg.lower()
+    
     def test_cover_letter_ok(self):
         """Test cover letter within word limits."""
         content = "word " * 300
@@ -291,6 +301,152 @@ class TestLengthCompliance:
         ok, msg = _check_length_compliance(content, "cover_letter")
         assert ok is False
         assert "too long" in msg.lower()
+
+
+# ==================
+# Markdown Detection (NEW)
+# ==================
+
+def _check_for_markdown(content: str) -> tuple:
+    """Check if content contains markdown formatting that should have been cleaned."""
+    if not content:
+        return False, []
+    
+    found = []
+    
+    # Check for bold markers
+    bold_double = re.findall(r'\*\*[^*]+\*\*', content)
+    bold_under = re.findall(r'__[^_]+__', content)
+    found.extend(bold_double)
+    found.extend(bold_under)
+    
+    # Check for italic markers
+    italic_star = re.findall(r'(?<!\*)\*[^*]+\*(?!\*)', content)
+    italic_under = re.findall(r'(?<!\w)_[^_]+_(?!\w)', content)
+    found.extend(italic_star)
+    found.extend(italic_under)
+    
+    return bool(found), found
+
+
+class TestMarkdownDetection:
+    """Tests for markdown formatting detection."""
+    
+    def test_detects_bold_double_asterisk(self):
+        """Test detection of **bold** text."""
+        content = "My name is **John Doe** and I am applying."
+        has_md, found = _check_for_markdown(content)
+        assert has_md is True
+        assert "**John Doe**" in found
+    
+    def test_detects_bold_underscore(self):
+        """Test detection of __bold__ text."""
+        content = "I have experience in __Python__ programming."
+        has_md, found = _check_for_markdown(content)
+        assert has_md is True
+        assert "__Python__" in found
+    
+    def test_detects_italic_asterisk(self):
+        """Test detection of *italic* text."""
+        content = "I am *excited* about this opportunity."
+        has_md, found = _check_for_markdown(content)
+        assert has_md is True
+        assert "*excited*" in found
+    
+    def test_clean_content_no_markdown(self):
+        """Test clean content without markdown."""
+        content = "Dear Hiring Manager, I am applying for the position."
+        has_md, found = _check_for_markdown(content)
+        assert has_md is False
+        assert found == []
+    
+    def test_underscore_in_word_not_detected(self):
+        """Test that underscores in words (like variable_name) are not flagged."""
+        content = "I have experience with snake_case naming."
+        has_md, found = _check_for_markdown(content)
+        # snake_case should not be detected as markdown
+        assert "_case" not in str(found)
+
+
+# ==================
+# Paragraph Structure (NEW)
+# ==================
+
+def _check_paragraph_structure(content: str, doc_type: str) -> tuple:
+    """Check if document has proper paragraph structure."""
+    if doc_type != "cover_letter":
+        return True, "Structure check only applies to cover letters"
+    
+    if not content:
+        return False, "Cover letter content is empty"
+    
+    # Check for section markers
+    has_opening = bool(re.search(r'\[OPENING\]', content, re.IGNORECASE))
+    has_body1 = bool(re.search(r'\[BODY PARAGRAPH 1\]', content, re.IGNORECASE))
+    has_body2 = bool(re.search(r'\[BODY PARAGRAPH 2\]', content, re.IGNORECASE))
+    has_closing = bool(re.search(r'\[CLOSING\]', content, re.IGNORECASE))
+    
+    section_count = sum([has_opening, has_body1, has_body2, has_closing])
+    
+    if section_count >= 3:
+        return True, f"Cover letter has {section_count} sections (good structure)"
+    
+    # Fallback: check for paragraph breaks
+    paragraphs = [p.strip() for p in content.split('\n\n') if p.strip() and len(p.strip()) > 50]
+    
+    if len(paragraphs) >= 3:
+        return True, f"Cover letter has {len(paragraphs)} paragraphs (good structure)"
+    
+    return False, f"Cover letter appears to have only {max(section_count, len(paragraphs))} section(s)."
+
+
+class TestParagraphStructure:
+    """Tests for cover letter paragraph structure validation."""
+    
+    def test_good_structure_with_markers(self):
+        """Test cover letter with proper section markers."""
+        content = """[OPENING]
+        Dear Hiring Manager, I am excited to apply.
+        
+        [BODY PARAGRAPH 1]
+        In my previous role, I achieved great success.
+        
+        [BODY PARAGRAPH 2]
+        Additionally, I have strong skills in Python.
+        
+        [CLOSING]
+        I look forward to hearing from you."""
+        
+        valid, msg = _check_paragraph_structure(content, "cover_letter")
+        assert valid is True
+        assert "4 sections" in msg or "good structure" in msg
+    
+    def test_good_structure_with_paragraphs(self):
+        """Test cover letter with proper paragraph breaks."""
+        para1 = "Dear Hiring Manager, I am writing to express my strong interest in the Software Engineer position at your company. With my background in Python and cloud technologies, I believe I would be an excellent fit."
+        para2 = "In my current role at TechCorp, I have successfully led multiple projects that improved system performance by 40%. I specialize in building scalable microservices and have extensive experience with AWS."
+        para3 = "I am excited about the opportunity to bring my skills to your team. I would welcome the chance to discuss how I can contribute to your organization's success. Thank you for your consideration."
+        
+        content = f"{para1}\n\n{para2}\n\n{para3}"
+        
+        valid, msg = _check_paragraph_structure(content, "cover_letter")
+        assert valid is True
+    
+    def test_bad_structure_single_paragraph(self):
+        """Test cover letter that's a single block of text."""
+        content = "Dear Hiring Manager, I am applying for the position. I have experience. Thank you."
+        
+        valid, msg = _check_paragraph_structure(content, "cover_letter")
+        assert valid is False
+        assert "only" in msg.lower()
+    
+    def test_resume_skips_structure_check(self):
+        """Test that structure check is skipped for resumes."""
+        content = "Just one paragraph."
+        
+        valid, msg = _check_paragraph_structure(content, "resume")
+        assert valid is True
+        assert "only applies to cover letters" in msg
 
 
 if __name__ == "__main__":
