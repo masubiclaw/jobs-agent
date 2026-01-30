@@ -2,11 +2,14 @@
 """
 Search job aggregators (Indeed, LinkedIn, Glassdoor, ZipRecruiter) using JobSpy.
 
+Automatically applies exclusions from your profile unless overridden.
+
 Usage:
     python scripts/run_jobspy_search.py "software engineer" "Seattle, WA"
     python scripts/run_jobspy_search.py "ML engineer" "Remote" --results 50
     python scripts/run_jobspy_search.py "data scientist" "San Francisco" --sites indeed,glassdoor
     python scripts/run_jobspy_search.py "engineer" "Seattle" --exclude "Amazon,Microsoft"
+    python scripts/run_jobspy_search.py "engineer" "Seattle" --no-exclude  # Disable exclusions
 """
 
 import argparse
@@ -18,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from job_agent_coordinator.tools.jobspy_tools import search_jobs_with_jobspy, JOBSPY_AVAILABLE
 from job_agent_coordinator.tools.job_cache import get_cache
+from job_agent_coordinator.tools.profile_store import get_store
 
 
 def main():
@@ -42,8 +46,16 @@ Examples:
                         help="Comma-separated companies to exclude (e.g., 'Amazon,Microsoft')")
     parser.add_argument("--hours", type=int, default=168, help="Max hours old (default: 168 = 7 days)")
     parser.add_argument("--no-cache", action="store_true", help="Don't cache results")
+    parser.add_argument("--no-exclude", action="store_true", help="Disable exclusion filtering (ignore profile exclusions)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Show full job details")
     args = parser.parse_args()
+    
+    # Auto-load exclusions from profile if not specified and not disabled
+    if not args.no_exclude and not args.exclude:
+        context = get_store().get_search_context()
+        profile_exclusions = context.get("excluded_companies", [])
+        if profile_exclusions:
+            args.exclude = ",".join(profile_exclusions)
 
     if not JOBSPY_AVAILABLE:
         print("❌ JobSpy not installed!")
@@ -63,6 +75,8 @@ Examples:
     print(f"⏰ Max age: {args.hours} hours ({args.hours // 24} days)")
     if args.exclude:
         print(f"🚫 Excluding: {args.exclude}")
+    elif args.no_exclude:
+        print(f"🚫 Exclusions: disabled")
     print("=" * 70)
     print()
 

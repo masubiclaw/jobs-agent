@@ -184,14 +184,16 @@ def keyword_match(
     excluded_companies = [c.lower() for c in profile.get("excluded_companies", [])]
     remote_pref = profile.get("remote_preference", "hybrid")
     
-    # Check exclusion
-    if company.lower() in excluded_companies:
-        return {
-            "keyword_score": 0,
-            "match_level": "excluded",
-            "excluded": True,
-            "reason": f"{company} is in exclusion list",
-        }
+    # Check exclusion (substring match for variants like "Amazon.com" matching "amazon")
+    company_lower = company.lower()
+    for exc in excluded_companies:
+        if exc in company_lower:
+            return {
+                "keyword_score": 0,
+                "match_level": "excluded",
+                "excluded": True,
+                "reason": f"{company} is in exclusion list (matched '{exc}')",
+            }
     
     job_desc_lower = job_description.lower() if job_description else ""
     

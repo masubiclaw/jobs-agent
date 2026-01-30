@@ -48,8 +48,8 @@ Both methods use the same underlying tools and cache. You can mix and match!
 │  └──────────┘        └──────────┘        └──────────┘        └────────┘ │
 │       │                   │                   │                   │      │
 │  CLI: import_      CLI: run_jobspy_    CLI: run_job_       CLI: show_   │
-│       profile           search              matcher            cache_   │
-│       _from_pdf    OR run_job_         OR rebuild_all_     stats       │
+│       profile           search              matcher            top_     │
+│       _from_pdf    OR run_job_         OR rebuild_all_     matches     │
 │                        scraper              matches                     │
 │       │                   │                   │                   │      │
 │  Chat: "create     Chat: "search       Chat: "analyze      Chat: "show  │
@@ -91,13 +91,23 @@ EOF
 
 ## Running the Pipeline
 
-### Step 1: Import Your Profile (Required First!)
+### Step 1: Create/Import Your Profile (Required First!)
 
 ```bash
-# Import from PDF resume - extracts skills, experience, preferences
+# Option A: Create profile interactively
+python scripts/add_profile.py
+
+# Option B: Create profile via command line
+python scripts/add_profile.py --name "John Doe" --email "john@example.com" \
+    --skills "python,java,kubernetes" --target-roles "Software Engineer"
+
+# Option C: Import from PDF resume - extracts skills, experience, preferences
 python scripts/import_profile_from_pdf.py your_resume.pdf
 
-# Preview without saving
+# List existing profiles
+python scripts/add_profile.py --list
+
+# Preview PDF import without saving
 python scripts/import_profile_from_pdf.py your_resume.pdf --dry-run
 ```
 
@@ -149,12 +159,24 @@ python scripts/rebuild_all_matches.py --llm
 
 ### Step 4: Query Results
 
-**Option A: CLI**
+**Option A: Show Top Matches**
+```bash
+# Show top matches with links (default: score >= 70%)
+python scripts/show_top_matches.py
+
+# Show matches with lower threshold
+python scripts/show_top_matches.py --min 50
+
+# Limit results
+python scripts/show_top_matches.py --min 60 --limit 20
+```
+
+**Option B: Cache Stats**
 ```bash
 python scripts/show_cache_stats.py --matches
 ```
 
-**Option B: Chat Agent**
+**Option C: Chat Agent**
 ```bash
 adk web
 # Open http://localhost:8000
@@ -169,6 +191,39 @@ The chat agent can do everything the scripts can:
 
 **Tip:** Use CLI scripts for batch operations (faster). Use chat for exploration and one-off queries.
 
+### Step 5: Generate Resume & Cover Letter (Optional)
+
+Generate tailored PDF documents for your top job matches:
+
+```bash
+# List jobs with match scores
+python scripts/generate_documents.py --list
+
+# Generate for a single job
+python scripts/generate_documents.py --job-id <JOB_ID> --type resume
+python scripts/generate_documents.py --job-id <JOB_ID> --type cover-letter
+python scripts/generate_documents.py --job-id <JOB_ID> --type both
+
+# Batch generate for top N matched jobs
+python scripts/generate_documents.py --top 5                    # Top 5 jobs
+python scripts/generate_documents.py --top 3 --type resume      # Only resumes
+python scripts/generate_documents.py --top 5 --min-score 70     # Score >= 70%
+python scripts/generate_documents.py --top 5 --dry-run          # Preview mode
+python scripts/generate_documents.py --top 5 --no-skip-existing # Force regenerate
+python scripts/generate_documents.py --top 5 --max-critiques 5  # More iterations
+```
+
+**Features:**
+- **Fact Verification:** All claims verified against your profile (no hallucination)
+- **Iterative Refinement:** LLM generator + critic loop until quality thresholds met (default: 3 iterations, configurable with `--max-critiques`)
+- **ATS Optimized:** Keyword matching and formatting for Applicant Tracking Systems
+- **Single-Page Validated:** Resumes are validated to fit on exactly one page
+- **Batch Generation:** Generate documents for top N jobs with progress tracking
+- **Skip Existing:** Automatically skips jobs with existing documents (override with `--no-skip-existing`)
+- **Auto-Naming:** Files named `{Company}_{Date}_{resume|coverletter}.pdf`
+
+Output saved to `generated_documents/` directory.
+
 ## What Gets Cached
 
 All data stored in `.job_cache/` directory:
@@ -182,6 +237,13 @@ All data stored in `.job_cache/` directory:
 | `scraping_progress.json` | Checkpoint for resuming web scraping | Auto-saved per source |
 | `chroma/` | Vector embeddings for semantic search | Auto-updated |
 | `exclusions.toon` | Companies to exclude from matches | Via agent or manually |
+
+Generated documents stored in `generated_documents/`:
+
+| File | Format | When Created |
+|------|--------|--------------|
+| `{Company}_{Date}_resume.pdf` | Professional 1-page resume | `generate_documents.py --type resume` |
+| `{Company}_{Date}_coverletter.pdf` | Tailored cover letter | `generate_documents.py --type cover-letter` |
 
 **Pre-cached:** 600+ jobs from tech companies, aerospace, government contractors.
 
@@ -265,11 +327,14 @@ The fine-tuned model uses MLX for inference instead of Ollama. Training data is 
 
 ```bash
 # Profile
-python scripts/import_profile_from_pdf.py resume.pdf    # Import profile
+python scripts/add_profile.py                           # Interactive profile creation
+python scripts/add_profile.py --list                    # List existing profiles
+python scripts/add_profile.py --name "Name" --email "email@example.com"
+python scripts/import_profile_from_pdf.py resume.pdf    # Import profile from PDF
 python scripts/import_profile_from_pdf.py resume.pdf --dry-run
 
 # JobSpy Search (Indeed, LinkedIn, Glassdoor, ZipRecruiter)
-python scripts/run_jobspy_search.py "engineer" "Seattle"           # Basic search
+python scripts/run_jobspy_search.py "software engineering manager" "Seattle"           # Basic search
 python scripts/run_jobspy_search.py "ML engineer" "Remote" -n 50   # 50 results
 python scripts/run_jobspy_search.py "manager" "NYC" --sites indeed,glassdoor
 python scripts/run_jobspy_search.py "dev" "SF" --exclude "Amazon,Meta"
@@ -292,9 +357,23 @@ python scripts/rebuild_all_matches.py                   # Keyword only
 python scripts/rebuild_all_matches.py --llm             # With LLM
 python scripts/rebuild_all_matches.py --llm --resume    # Resume
 
-# Stats
+# Stats & Results
+python scripts/show_top_matches.py                      # Top matches >= 70%
+python scripts/show_top_matches.py --min 50             # Matches >= 50%
+python scripts/show_top_matches.py --min 60 --limit 20  # Custom threshold/limit
 python scripts/show_cache_stats.py                      # Job stats
 python scripts/show_cache_stats.py --matches            # Include matches
+
+# Document Generation
+python scripts/generate_documents.py --list             # List jobs
+python scripts/generate_documents.py --job-id X --type resume
+python scripts/generate_documents.py --job-id X --type cover-letter
+python scripts/generate_documents.py --job-id X --type both
+python scripts/generate_documents.py --top 5            # Batch: top 5 jobs
+python scripts/generate_documents.py --top 3 --type resume --min-score 70
+python scripts/generate_documents.py --top 5 --dry-run  # Preview mode
+python scripts/generate_documents.py --top 5 --no-skip-existing
+python scripts/generate_documents.py --top 5 --max-critiques 5  # More iterations
 ```
 
 ## Project Structure
@@ -302,23 +381,39 @@ python scripts/show_cache_stats.py --matches            # Include matches
 ```
 jobs-agent/
 ├── scripts/                          # CLI pipeline scripts
-│   ├── import_profile_from_pdf.py    # Step 1: Import profile
+│   ├── add_profile.py                # Step 1a: Create profile interactively
+│   ├── import_profile_from_pdf.py    # Step 1b: Import profile from PDF
 │   ├── run_jobspy_search.py          # Step 2a: Search aggregators
 │   ├── run_job_scraper.py            # Step 2b: Scrape career pages
 │   ├── run_job_matcher.py            # Step 3: Match jobs
 │   ├── rebuild_all_matches.py        # Rebuild matches
-│   └── show_cache_stats.py           # View cache stats
+│   ├── show_top_matches.py           # Step 4: View top matches with links
+│   ├── show_cache_stats.py           # View cache stats
+│   └── generate_documents.py         # Step 5: Generate resume/cover letter
 ├── job_agent_coordinator/            # Agent code
 │   ├── agent.py                      # Chat agent (queries cache)
 │   ├── sub_agents/job_matcher/       # Two-pass matching logic
-│   └── tools/                        # Scraping, caching tools
+│   └── tools/                        # Scraping, caching, document tools
+│       ├── job_cache.py              # Job and match storage
+│       ├── profile_store.py          # Profile management
+│       ├── document_generator.py     # LLM resume/cover letter generation
+│       ├── document_critic.py        # Fact verification & ATS scoring
+│       ├── pdf_generator.py          # PDF rendering (single-page validated)
+│       └── resume_tools.py           # Document generation orchestration
+├── tests/                            # Unit and integration tests
+│   ├── test_exclusions.py            # Exclusion list tests
+│   ├── test_document_generation.py   # Artifact cleaning tests
+│   ├── test_pdf_generation.py        # PDF page count tests
+│   └── test_integration.py           # Integration tests
 ├── .job_cache/                       # Cached data (gitignored)
 │   ├── profiles/*.toon               # User profiles
 │   ├── jobs.toon                     # Job listings
 │   ├── matches.toon                  # Match results
 │   └── chroma/                       # Vector embeddings
-├── JobOpeningsLink.md                # Job source URLs
-└── tests/                            # Unit tests
+├── generated_documents/              # Output PDFs (gitignored)
+├── models/                           # ML models (gitignored)
+├── data/                             # Training data (gitignored)
+└── JobOpeningsLink.md                # Job source URLs
 ```
 
 ## Troubleshooting
@@ -350,8 +445,16 @@ python scripts/rebuild_all_matches.py --llm
 ## Running Tests
 
 ```bash
-pytest tests/ -v
-pytest tests/test_job_matcher.py -v
+# Run all fast unit tests
+pytest tests/ -v --ignore=tests/test_integration.py
+
+# Run specific test files
+pytest tests/test_exclusions.py -v           # Exclusion list tests
+pytest tests/test_document_generation.py -v  # Artifact cleaning tests
+pytest tests/test_pdf_generation.py -v       # PDF page count tests
+
+# Run integration tests (requires LLM, slower)
+python tests/test_integration.py
 ```
 
 ## License

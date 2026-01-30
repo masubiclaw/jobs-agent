@@ -3,6 +3,7 @@
 Run job scraper to fetch jobs from configured sources.
 
 Supports checkpointing - if interrupted, run with --resume to continue.
+Automatically filters out companies in your profile's exclusion list.
 
 Usage:
     python scripts/run_job_scraper.py                    # Show available sources
@@ -12,6 +13,8 @@ Usage:
     python scripts/run_job_scraper.py --max-sources 5    # Scrape first 5 sources
     python scripts/run_job_scraper.py --resume           # Resume interrupted scrape
     python scripts/run_job_scraper.py --status           # Show checkpoint status
+    python scripts/run_job_scraper.py --exclude "Amazon,Meta"  # Override exclusions
+    python scripts/run_job_scraper.py --no-exclude       # Disable exclusion filtering
 """
 
 import argparse
@@ -29,6 +32,7 @@ from job_agent_coordinator.tools.job_links_scraper import (
     ScrapingProgress,
 )
 from job_agent_coordinator.tools.job_cache import get_cache
+from job_agent_coordinator.tools.profile_store import get_store
 
 
 def show_checkpoint_status():
@@ -96,7 +100,19 @@ Examples:
     parser.add_argument("--status", action="store_true", help="Show checkpoint status")
     parser.add_argument("--clear", action="store_true", help="Clear checkpoint and start fresh")
     parser.add_argument("--verbose", "-v", action="store_true", help="Show progress for each source")
+    parser.add_argument("--exclude", type=str, help="Companies to exclude (comma-separated), overrides profile")
+    parser.add_argument("--no-exclude", action="store_true", help="Disable exclusion filtering")
     args = parser.parse_args()
+    
+    # Load exclusions from profile or command line
+    exclusions = []
+    if not args.no_exclude:
+        if args.exclude:
+            exclusions = [c.strip().lower() for c in args.exclude.split(",") if c.strip()]
+        else:
+            # Auto-load from profile
+            context = get_store().get_search_context()
+            exclusions = [c.lower() for c in context.get("excluded_companies", [])]
 
     # Handle --status
     if args.status:
@@ -151,6 +167,8 @@ Examples:
     print(f"📦 Initial cache: {initial_count} jobs")
     if args.resume:
         print("📥 Mode: RESUME from checkpoint")
+    if exclusions and not args.no_exclude:
+        print(f"🚫 Excluding companies: {', '.join(exclusions)}")
     print()
 
     # Progress callback for verbose mode
@@ -166,6 +184,12 @@ Examples:
             print(f"   {status} [{completed}/{total}] {name}: {jobs} found, {cached} cached (~{eta:.0f}s remaining)")
 
     if args.source:
+        # Check if source is excluded
+        if exclusions and any(exc in args.source.lower() for exc in exclusions):
+            print(f"❌ Source '{args.source}' matches exclusion list. Skipping.")
+            print(f"   Use --no-exclude to override.")
+            return
+        
         # Scrape single source (no checkpointing for single source)
         print(f"🕷️  Scraping source: {args.source}")
         print("-" * 70)

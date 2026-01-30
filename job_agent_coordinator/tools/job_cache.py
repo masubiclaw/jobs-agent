@@ -217,14 +217,44 @@ class JobCache:
         return None
     
     def list_matches(self, min_score: int = 0, limit: int = 50) -> List[Dict[str, Any]]:
-        """List cached matches, optionally filtered by minimum score."""
+        """List cached matches, optionally filtered by minimum score.
+        
+        Also filters out companies in the profile's exclusion list.
+        """
+        # Load current exclusions from profile
+        from .profile_store import get_store
+        context = get_store().get_search_context()
+        excluded = [c.lower() for c in context.get("excluded_companies", [])]
+        
         matches = [
             m for m in self._matches.values()
             if m.get("match_score", 0) >= min_score
+            and m.get("match_level") != "excluded"  # Filter already-marked excluded
+            and not self._is_company_excluded(m, excluded)  # Filter by current exclusions
         ]
         # Sort by score descending
         matches.sort(key=lambda x: x.get("match_score", 0), reverse=True)
         return matches[:limit]
+    
+    def _is_company_excluded(self, match: Dict[str, Any], excluded: List[str]) -> bool:
+        """Check if match's company is in exclusion list.
+        
+        Args:
+            match: Match dict containing job_id
+            excluded: List of excluded company names (lowercase)
+            
+        Returns:
+            True if company should be excluded
+        """
+        if not excluded:
+            return False
+        job_id = match.get("job_id", "")
+        job = self.get(job_id)
+        if job:
+            company = job.get("company", "").lower()
+            # Check if any exclusion term is contained in company name
+            return any(exc in company for exc in excluded)
+        return False
     
     def clear_matches(self, job_id: str = None):
         """Clear match cache. If job_id provided, only clear that job's matches."""

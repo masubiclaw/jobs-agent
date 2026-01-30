@@ -62,3 +62,12 @@ data/
 # Generated PDFs (keep templates, ignore generated)
 *.pdf
 !pdfGenTest/*.pdf
+
+# Generated documents directory
+generated_documents/
+
+# Evaluation data
+eval/
+
+# Evaluation data
+eval/

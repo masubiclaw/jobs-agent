@@ -27,6 +27,11 @@ from .tools.job_links_scraper import (
     get_links_summary_tool,
     scrape_single_source_tool,
 )
+from .tools.resume_tools import (
+    generate_resume_tool,
+    generate_cover_letter_tool,
+    generate_application_package_tool,
+)
 from . import prompt
 
 logger = logging.getLogger(__name__)
@@ -67,6 +72,10 @@ job_agent_coordinator = LlmAgent(
         scrape_job_links_tool,
         get_links_summary_tool,
         scrape_single_source_tool,
+        # Resume/Cover Letter tools
+        generate_resume_tool,
+        generate_cover_letter_tool,
+        generate_application_package_tool,
     ],
 )
 

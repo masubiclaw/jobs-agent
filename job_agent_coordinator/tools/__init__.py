@@ -85,6 +85,15 @@ from .job_links_scraper import (
     parse_markdown_links_tool,
 )
 
+from .resume_tools import (
+    generate_resume,
+    generate_cover_letter,
+    generate_application_package,
+    generate_resume_tool,
+    generate_cover_letter_tool,
+    generate_application_package_tool,
+)
+
 __all__ = [
     # JobSpy
     "search_jobs_with_jobspy",
@@ -159,4 +168,11 @@ __all__ = [
     "get_links_summary_tool",
     "scrape_single_source_tool",
     "parse_markdown_links_tool",
+    # Resume/Cover Letter tools
+    "generate_resume",
+    "generate_cover_letter",
+    "generate_application_package",
+    "generate_resume_tool",
+    "generate_cover_letter_tool",
+    "generate_application_package_tool",
 ]
