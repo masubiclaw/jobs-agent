@@ -249,6 +249,34 @@ Generated documents stored in `generated_documents/`:
 
 **Pre-cached:** 600+ jobs from tech companies, aerospace, government contractors.
 
+### Cache Maintenance
+
+Over time, job listings expire or become unavailable. Use the cleanup script to remove dead jobs:
+
+```bash
+# Remove jobs with missing URLs (fast, no network)
+python scripts/clean_dead_jobs.py
+
+# Also validate URLs are still accessible (slower, uses HTTP HEAD requests)
+python scripts/clean_dead_jobs.py --check-urls
+
+# Remove jobs older than N days (useful after fresh scraping)
+python scripts/clean_dead_jobs.py --older-than 14
+
+# Combine filters with preview mode
+python scripts/clean_dead_jobs.py --check-urls --older-than 7 --dry-run
+
+# Performance tuning for URL checks
+python scripts/clean_dead_jobs.py --check-urls --threads 20 --timeout 10
+```
+
+**What gets removed:**
+- Jobs with missing or empty URLs (always removed)
+- Jobs older than specified days (`--older-than`)
+- Jobs with dead URLs returning 404/410 or unreachable (`--check-urls`)
+
+**Tip:** Run `--dry-run` first to preview what will be removed before committing.
+
 ## Two-Pass Matching
 
 ```
@@ -376,6 +404,12 @@ python scripts/generate_documents.py --top 3 --type resume --min-score 70
 python scripts/generate_documents.py --top 5 --dry-run  # Preview mode
 python scripts/generate_documents.py --top 5 --no-skip-existing
 python scripts/generate_documents.py --top 5 --max-critiques 5  # More iterations
+
+# Cache Maintenance
+python scripts/clean_dead_jobs.py                    # Remove jobs with no URLs
+python scripts/clean_dead_jobs.py --check-urls       # Validate URLs are accessible
+python scripts/clean_dead_jobs.py --older-than 14    # Remove jobs older than 14 days
+python scripts/clean_dead_jobs.py --check-urls --older-than 7 --dry-run  # Preview
 ```
 
 ## Project Structure
@@ -391,7 +425,8 @@ jobs-agent/
 │   ├── rebuild_all_matches.py        # Rebuild matches
 │   ├── show_top_matches.py           # Step 4: View top matches with links
 │   ├── show_cache_stats.py           # View cache stats
-│   └── generate_documents.py         # Step 5: Generate resume/cover letter
+│   ├── generate_documents.py         # Step 5: Generate resume/cover letter
+│   └── clean_dead_jobs.py            # Cache maintenance: remove expired jobs
 ├── job_agent_coordinator/            # Agent code
 │   ├── agent.py                      # Chat agent (queries cache)
 │   ├── sub_agents/job_matcher/       # Two-pass matching logic
