@@ -141,6 +141,8 @@ python scripts/run_job_scraper.py --status
 
 **Note:** 600+ jobs pre-cached - you may not need to scrape/search.
 
+**Adding Job Sources:** Edit `JobOpeningsLink.md` to add company career page URLs. The file is organized by category (Local, Defense, Aerospace, Other). The scraper uses these URLs as starting points.
+
 ### Step 3: Match Jobs Against Profile
 
 ```bash
@@ -413,8 +415,33 @@ jobs-agent/
 ├── generated_documents/              # Output PDFs (gitignored)
 ├── models/                           # ML models (gitignored)
 ├── data/                             # Training data (gitignored)
-└── JobOpeningsLink.md                # Job source URLs
+└── JobOpeningsLink.md                # Job source URLs (editable)
 ```
+
+## Adding Job Sources (JobOpeningsLink.md)
+
+The scraper reads career page URLs from `JobOpeningsLink.md`. To add new sources:
+
+```markdown
+## Category Name
+
+- [Company Name](https://careers.company.com/jobs)
+```
+
+**Current categories:**
+- **Local** - Government/municipal jobs (Seattle, King County, etc.)
+- **Defense** - Defense contractors (Lockheed, Northrop, BAE, etc.)
+- **Aerospace** - Space/aviation companies (Boeing, SpaceX, Blue Origin)
+- **Other** - Tech companies, healthcare, etc.
+
+**Example - Adding a new source:**
+```markdown
+## Other
+
+- [Acme Corp](https://acme.com/careers/engineering)
+```
+
+Then run: `python scripts/run_job_scraper.py --source "Acme Corp"`
 
 ## Troubleshooting
 
