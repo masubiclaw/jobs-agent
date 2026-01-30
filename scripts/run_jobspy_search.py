@@ -10,6 +10,7 @@ Usage:
     python scripts/run_jobspy_search.py "data scientist" "San Francisco" --sites indeed,glassdoor
     python scripts/run_jobspy_search.py "engineer" "Seattle" --exclude "Amazon,Microsoft"
     python scripts/run_jobspy_search.py "engineer" "Seattle" --no-exclude  # Disable exclusions
+    python scripts/run_jobspy_search.py "engineer" "Seattle" --week        # Expand to 7 days
 """
 
 import argparse
@@ -34,7 +35,8 @@ Examples:
   python scripts/run_jobspy_search.py "ML engineer" "Remote" --results 50
   python scripts/run_jobspy_search.py "data scientist" "Bay Area" --sites indeed,glassdoor
   python scripts/run_jobspy_search.py "engineer" "Seattle" --exclude "Amazon,Microsoft,Boeing"
-  python scripts/run_jobspy_search.py "manager" "NYC" --hours 72  # Last 3 days only
+  python scripts/run_jobspy_search.py "manager" "NYC" --hours 48   # Last 2 days
+  python scripts/run_jobspy_search.py "engineer" "Seattle" --week  # Last 7 days (more results)
 """
     )
     parser.add_argument("search_term", type=str, help="Job search term (e.g., 'software engineer')")
@@ -44,11 +46,16 @@ Examples:
                         help="Sites to search: indeed,linkedin,glassdoor,zip_recruiter (default: indeed,linkedin)")
     parser.add_argument("--exclude", "-x", type=str, default="", 
                         help="Comma-separated companies to exclude (e.g., 'Amazon,Microsoft')")
-    parser.add_argument("--hours", type=int, default=168, help="Max hours old (default: 168 = 7 days)")
+    parser.add_argument("--hours", type=int, default=24, help="Max hours old (default: 24 = 1 day)")
+    parser.add_argument("--week", action="store_true", help="Expand to jobs from last 7 days (more results, may have expired links)")
     parser.add_argument("--no-cache", action="store_true", help="Don't cache results")
     parser.add_argument("--no-exclude", action="store_true", help="Disable exclusion filtering (ignore profile exclusions)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Show full job details")
     args = parser.parse_args()
+    
+    # --week expands --hours to 168
+    if args.week:
+        args.hours = 168
     
     # Auto-load exclusions from profile if not specified and not disabled
     if not args.no_exclude and not args.exclude:
@@ -72,7 +79,11 @@ Examples:
     print(f"📍 Location: {args.location}")
     print(f"🌐 Sites: {args.sites}")
     print(f"📊 Results: {args.results}")
-    print(f"⏰ Max age: {args.hours} hours ({args.hours // 24} days)")
+    if args.week:
+        print(f"⏰ Max age: {args.hours} hours ({args.hours // 24} days) - expanded range")
+        print(f"   ⚠️  Older jobs may have expired links")
+    else:
+        print(f"⏰ Max age: {args.hours} hours (fresh jobs only)")
     if args.exclude:
         print(f"🚫 Excluding: {args.exclude}")
     elif args.no_exclude:
@@ -116,9 +127,13 @@ Examples:
                 salary = job.get("salary", "")
                 platform = job.get("platform", "")
                 url = job.get("url", "")
+                posted = job.get("posted_date", "")
 
                 print(f"{i:2}. {title}")
-                print(f"    📍 {company} | {location} | {platform}")
+                meta_parts = [company, location, platform]
+                if posted and posted != "None":
+                    meta_parts.append(f"posted: {posted}")
+                print(f"    📍 {' | '.join(meta_parts)}")
                 if salary and salary != "Not disclosed":
                     print(f"    💰 {salary}")
                 if args.verbose and url:

@@ -19,11 +19,20 @@ def search_jobs_with_jobspy(
     search_term: str,
     location: str,
     results_wanted: int = 15,
-    hours_old: int = 168,
+    hours_old: int = 24,
     sites: str = "indeed,linkedin",
     exclude_companies: str = ""
 ) -> dict:
-    """Search for jobs using JobSpy."""
+    """Search for jobs using JobSpy.
+    
+    Args:
+        search_term: Job title or keywords to search
+        location: City, state, or "Remote"
+        results_wanted: Number of results to return
+        hours_old: Max age of job postings in hours (default 24 = 1 day for fresh links)
+        sites: Comma-separated list of sites to search
+        exclude_companies: Comma-separated companies to exclude
+    """
     if not JOBSPY_AVAILABLE:
         return {"success": False, "error": "JobSpy not installed", "jobs": []}
     

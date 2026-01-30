@@ -371,7 +371,7 @@ python scripts/generate_documents.py --list             # List jobs
 python scripts/generate_documents.py --job-id X --type resume
 python scripts/generate_documents.py --job-id X --type cover-letter
 python scripts/generate_documents.py --job-id X --type both
-python scripts/generate_documents.py --top 5            # Batch: top 5 jobs
+python scripts/generate_documents.py --top 10 --type both -min-score 60   # Batch: top 5 jobs
 python scripts/generate_documents.py --top 3 --type resume --min-score 70
 python scripts/generate_documents.py --top 5 --dry-run  # Preview mode
 python scripts/generate_documents.py --top 5 --no-skip-existing
