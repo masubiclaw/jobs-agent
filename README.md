@@ -226,6 +226,36 @@ python scripts/generate_documents.py --top 5 --max-critiques 5  # More iteration
 
 Output saved to `generated_documents/` directory.
 
+### Generate from URL (Quick Apply)
+
+Generate documents directly from any job posting URL without needing to scrape or match first:
+
+```bash
+# Basic usage - pass any job URL
+python scripts/generate_from_url.py "https://www.indeed.com/viewjob?jk=abc123"
+
+# Generate specific document type
+python scripts/generate_from_url.py URL --type resume
+python scripts/generate_from_url.py URL --type cover-letter
+
+# Preview extracted job without generating (dry run)
+python scripts/generate_from_url.py URL --dry-run
+
+# Don't save job to cache (one-time use)
+python scripts/generate_from_url.py URL --no-cache
+
+# Use specific profile
+python scripts/generate_from_url.py URL --profile justin_masui
+```
+
+**Supported sites:** Indeed, LinkedIn, Glassdoor, Greenhouse, Lever, Workday, and most career pages.
+
+**How it works:**
+1. Fetches the page using Playwright (handles JavaScript-rendered content)
+2. Extracts job details (title, company, location, description) using LLM
+3. Adds job to cache (optional, for future reference)
+4. Generates tailored resume and/or cover letter
+
 ## What Gets Cached
 
 All data stored in `.job_cache/` directory:
@@ -405,6 +435,13 @@ python scripts/generate_documents.py --top 5 --dry-run  # Preview mode
 python scripts/generate_documents.py --top 5 --no-skip-existing
 python scripts/generate_documents.py --top 5 --max-critiques 5  # More iterations
 
+# Generate from URL (Quick Apply)
+python scripts/generate_from_url.py URL              # Generate both resume and cover letter
+python scripts/generate_from_url.py URL --type resume
+python scripts/generate_from_url.py URL --type cover-letter
+python scripts/generate_from_url.py URL --dry-run    # Preview extracted job
+python scripts/generate_from_url.py URL --no-cache   # Don't save job to cache
+
 # Cache Maintenance
 python scripts/clean_dead_jobs.py                    # Remove jobs with no URLs
 python scripts/clean_dead_jobs.py --check-urls       # Validate URLs are accessible
@@ -426,6 +463,7 @@ jobs-agent/
 │   ├── show_top_matches.py           # Step 4: View top matches with links
 │   ├── show_cache_stats.py           # View cache stats
 │   ├── generate_documents.py         # Step 5: Generate resume/cover letter
+│   ├── generate_from_url.py          # Quick apply: generate from any job URL
 │   └── clean_dead_jobs.py            # Cache maintenance: remove expired jobs
 ├── job_agent_coordinator/            # Agent code
 │   ├── agent.py                      # Chat agent (queries cache)
@@ -436,7 +474,8 @@ jobs-agent/
 │       ├── document_generator.py     # LLM resume/cover letter generation
 │       ├── document_critic.py        # Fact verification & ATS scoring
 │       ├── pdf_generator.py          # PDF rendering (single-page validated)
-│       └── resume_tools.py           # Document generation orchestration
+│       ├── resume_tools.py           # Document generation orchestration
+│       └── url_job_fetcher.py        # Fetch job details from any URL
 ├── tests/                            # Unit and integration tests
 │   ├── test_exclusions.py            # Exclusion list tests
 │   ├── test_document_generation.py   # Artifact cleaning tests
