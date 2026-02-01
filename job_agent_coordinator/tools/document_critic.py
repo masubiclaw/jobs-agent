@@ -163,12 +163,17 @@ class CritiqueResult:
     found_markdown: Optional[List[str]] = None
     structure_valid: bool = True
     structure_feedback: str = ""
+    grammar_score: int = 100
+    grammar_errors: Optional[List[Dict[str, str]]] = None
+    grammar_feedback: str = ""
     
     def __post_init__(self):
         if self.found_artifacts is None:
             self.found_artifacts = []
         if self.found_markdown is None:
             self.found_markdown = []
+        if self.grammar_errors is None:
+            self.grammar_errors = []
 
 
 def _call_ollama(prompt: str, temperature: float = 0.1) -> str:
@@ -352,8 +357,7 @@ Check for:
 4. Contact information present
 5. Relevant keywords for the job
 6. Professional language
-7. Proper grammar and spelling
-8. Achievement-focused bullet points (for resumes)
+7. Achievement-focused bullet points (for resumes)
 
 OUTPUT FORMAT (JSON):
 {{
@@ -361,6 +365,39 @@ OUTPUT FORMAT (JSON):
     "issues": ["issue1", "issue2"],
     "suggestions": ["suggestion1", "suggestion2"]
 }}
+"""
+
+
+GRAMMAR_CHECK_PROMPT = """You are an expert grammar and writing quality checker. Analyze this {doc_type} for grammatical errors and writing quality issues.
+
+DOCUMENT:
+{document}
+
+Check for these specific issues:
+1. Subject-verb agreement errors (e.g., "team were" should be "team was")
+2. Tense consistency (mixing past and present tense inappropriately)
+3. Run-on sentences (multiple independent clauses without proper punctuation)
+4. Comma splices (two independent clauses joined only by a comma)
+5. Sentence fragments (incomplete sentences)
+6. Pronoun reference errors (unclear what "it" or "they" refers to)
+7. Awkward phrasing or unclear sentences
+8. Missing articles (a, an, the)
+9. Incorrect prepositions
+10. Redundant or wordy phrases
+
+Be STRICT - professional documents must have perfect grammar.
+
+OUTPUT FORMAT (JSON):
+{{
+    "grammar_score": 0-100,
+    "errors": [
+        {{"error": "specific error text", "correction": "corrected text", "type": "error type"}}
+    ],
+    "error_count": number,
+    "summary": "brief overall assessment"
+}}
+
+If there are NO errors, return grammar_score of 100 and empty errors array.
 """
 
 
@@ -453,7 +490,32 @@ Job titles held: {', '.join(set(profile_facts['titles']))}
         logger.warning(f"ATS check parsing failed: {e}")
         ats_data = {"ats_score": 70, "issues": [], "suggestions": []}
     
-    # 5. Calculate overall score
+    # 5. Grammar check via LLM
+    grammar_prompt = GRAMMAR_CHECK_PROMPT.format(
+        document=content,
+        doc_type="resume" if doc_type == "resume" else "cover letter"
+    )
+    
+    try:
+        grammar_response = _call_ollama(grammar_prompt)
+        # Extract JSON - handle nested objects
+        json_match = re.search(r'\{[\s\S]*\}', grammar_response)
+        if json_match:
+            grammar_data = json.loads(json_match.group())
+        else:
+            grammar_data = {"grammar_score": 80, "errors": [], "error_count": 0, "summary": ""}
+    except Exception as e:
+        logger.warning(f"Grammar check parsing failed: {e}")
+        grammar_data = {"grammar_score": 80, "errors": [], "error_count": 0, "summary": ""}
+    
+    grammar_score = grammar_data.get("grammar_score", 80)
+    grammar_errors = grammar_data.get("errors", [])
+    grammar_feedback = grammar_data.get("summary", "")
+    
+    if grammar_errors:
+        logger.warning(f"Grammar issues found ({len(grammar_errors)}): {grammar_feedback}")
+    
+    # 6. Calculate overall score
     fact_score = fact_data.get("fact_score", 50)
     ats_score = ats_data.get("ats_score", 70)
     
@@ -461,10 +523,11 @@ Job titles held: {', '.join(set(profile_facts['titles']))}
     if fact_data.get("fabricated_facts"):
         fact_score = 0
     
-    # Weighted average (facts are critical)
-    overall_score = int(fact_score * 0.4 + keyword_score * 0.3 + ats_score * 0.3)
+    # Weighted average (facts are critical, grammar is important)
+    # facts: 35%, keywords: 25%, ats: 20%, grammar: 20%
+    overall_score = int(fact_score * 0.35 + keyword_score * 0.25 + ats_score * 0.20 + grammar_score * 0.20)
     
-    # 6. Compile suggestions
+    # 7. Compile suggestions
     suggestions = ats_data.get("suggestions", [])
     if has_artifacts:
         suggestions.insert(0, f"CRITICAL: Remove template artifacts: {', '.join(found_artifacts[:3])}")
@@ -472,12 +535,24 @@ Job titles held: {', '.join(set(profile_facts['titles']))}
         suggestions.insert(0, f"CRITICAL: Remove markdown formatting: {', '.join(found_markdown[:3])}. Use plain text only.")
     if not structure_valid:
         suggestions.insert(0, f"STRUCTURE: {structure_feedback}")
+    if grammar_score < 90:
+        # Add specific grammar corrections as suggestions (grammar must be >= 90 to pass)
+        if grammar_errors:
+            error_examples = [f"'{e.get('error', '')}' → '{e.get('correction', '')}'" for e in grammar_errors[:3] if isinstance(e, dict)]
+            if error_examples:
+                suggestions.insert(0, f"GRAMMAR (CRITICAL - must fix to pass): {'; '.join(error_examples)}")
+            else:
+                suggestions.insert(0, f"GRAMMAR (CRITICAL): {grammar_feedback or 'Fix grammatical errors - must achieve 90%+ grammar score'}")
+        else:
+            suggestions.insert(0, f"GRAMMAR (CRITICAL): {grammar_feedback or 'Improve grammar and writing quality to 90%+'}")
     if missing_kw:
         suggestions.append(f"Add missing keywords: {', '.join(missing_kw[:5])}")
     if not length_ok:
         suggestions.insert(0, length_feedback)
     
-    # 7. Determine pass/fail (artifacts and markdown cause automatic failure)
+    # 8. Determine pass/fail (artifacts, markdown, and grammar issues cause failure)
+    # Grammar must be >= 90 (near-perfect) for professional quality
+    grammar_acceptable = grammar_score >= 90
     passed = (
         fact_score >= 100 and
         overall_score >= 75 and
@@ -485,7 +560,8 @@ Job titles held: {', '.join(set(profile_facts['titles']))}
         not fact_data.get("fabricated_facts") and
         not has_artifacts and
         not has_markdown and
-        structure_valid
+        structure_valid and
+        grammar_acceptable
     )
     
     return CritiqueResult(
@@ -506,6 +582,9 @@ Job titles held: {', '.join(set(profile_facts['titles']))}
         found_markdown=found_markdown,
         structure_valid=structure_valid,
         structure_feedback=structure_feedback,
+        grammar_score=grammar_score,
+        grammar_errors=grammar_errors,
+        grammar_feedback=grammar_feedback,
     )
 
 
@@ -525,6 +604,22 @@ def format_critique_feedback(critique: CritiqueResult) -> str:
     if critique.fabricated_facts:
         feedback_parts.append(f"CRITICAL: Remove fabricated facts: {', '.join(critique.fabricated_facts)}")
     
+    # Grammar feedback with specific corrections (CRITICAL - must be >= 90 to pass)
+    if critique.grammar_score < 90:
+        grammar_feedback = f"GRAMMAR (CRITICAL - current score {critique.grammar_score}%, need 90%+): Fix these errors - "
+        if critique.grammar_errors:
+            corrections = []
+            for err in critique.grammar_errors[:5]:
+                if isinstance(err, dict) and err.get('error') and err.get('correction'):
+                    corrections.append(f"'{err['error']}' should be '{err['correction']}'")
+            if corrections:
+                grammar_feedback += "; ".join(corrections)
+            else:
+                grammar_feedback += critique.grammar_feedback or "Rewrite with perfect grammar, no errors"
+        else:
+            grammar_feedback += critique.grammar_feedback or "Rewrite with perfect grammar, proper sentence structure"
+        feedback_parts.append(grammar_feedback)
+    
     if not critique.length_compliant:
         feedback_parts.append(f"LENGTH: {critique.length_feedback}")
     
@@ -532,6 +627,9 @@ def format_critique_feedback(critique: CritiqueResult) -> str:
         feedback_parts.append(f"KEYWORDS: Low keyword match ({critique.keyword_score}%). Add more job-relevant keywords.")
     
     if critique.suggestions:
-        feedback_parts.append(f"SUGGESTIONS: {'; '.join(critique.suggestions[:3])}")
+        # Filter out grammar suggestions since we handle them separately
+        non_grammar_suggestions = [s for s in critique.suggestions if not s.startswith("GRAMMAR:")]
+        if non_grammar_suggestions:
+            feedback_parts.append(f"SUGGESTIONS: {'; '.join(non_grammar_suggestions[:3])}")
     
     return "\n".join(feedback_parts)

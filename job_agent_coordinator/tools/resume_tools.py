@@ -19,9 +19,10 @@ from .pdf_generator import generate_resume_pdf, generate_cover_letter_pdf, valid
 logger = logging.getLogger(__name__)
 
 # Configuration
-DEFAULT_MAX_ITERATIONS = 3
+DEFAULT_MAX_ITERATIONS = 5
 PASS_THRESHOLD = 75
 FACT_THRESHOLD = 100
+GRAMMAR_THRESHOLD = 90  # Grammar must be near-perfect
 
 # Module-level setting that can be modified
 _max_iterations = DEFAULT_MAX_ITERATIONS
@@ -120,6 +121,7 @@ def _run_generation_loop(
             f"Critique scores - Fact: {critique.fact_score}%, "
             f"Keyword: {critique.keyword_score}%, "
             f"ATS: {critique.ats_score}%, "
+            f"Grammar: {critique.grammar_score}%, "
             f"Overall: {critique.overall_score}%"
         )
         
