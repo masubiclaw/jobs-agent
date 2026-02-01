@@ -1,5 +1,48 @@
 # Job Openings URLs
 
+## Seattle Area - Fortune 500
+- [Amazon](https://www.amazon.jobs/en/search)
+- [Microsoft](https://careers.microsoft.com/)
+- [Costco](https://careers.costco.com/jobs)
+- [Starbucks](https://careers.starbucks.com/)
+- [Nordstrom](https://careers.nordstrom.com/jobs)
+- [Expedia Group](https://careers.expediagroup.com/jobs)
+- [Paccar](https://jobs.paccar.com/)
+- [Weyerhaeuser](https://www.weyerhaeuser.com/careers/)
+
+## Seattle Area - Tech
+- [Zillow](https://www.zillow.com/careers/)
+- [Smartsheet](https://www.smartsheet.com/careers-list)
+- [F5 Networks](https://ffive.wd5.myworkdayjobs.com/f5jobs)
+- [T-Mobile](https://careers.t-mobile.com/jobs)
+- [Tableau (Salesforce)](https://www.tableau.com/about/careers/life-at-tableau)
+- [PayScale](https://www.payscale.com/careers)
+- [Getty Images](https://jobs.lever.co/gettyimages)
+- [Convoy](https://convoy.com/careers/)
+- [Rover.com](https://www.rover.com/careers/search/)
+- [Redfin data science](https://careers.redfin.com/us/en/c/data-science-analytics-jobs)
+- [Redfin Engineering](https://careers.redfin.com/us/en/c/engineering-product-jobs)
+- [avvo](https://www.avvo.com/about_avvo/jobs#jobs)
+- [Allrecipes](https://www.people.inc/careers)
+
+## Seattle Area - Gaming
+- [Valve](https://www.valvesoftware.com/jobs)
+- [Bungie](https://careers.bungie.com/jobs)
+- [Wizards of the Coast](https://company.wizards.com/en/careers)
+- [Nintendo of America](https://careers.nintendo.com/job-openings/)
+
+## Seattle Area - Retail & Consumer
+- [REI](https://www.rei.jobs/jobs)
+- [Funko](https://funko.careers/)
+- [Holland America Line](https://hollandamericagroup.pinpointhq.com/)
+
+## Tech (Other)
+- [Anthropic](https://www.anthropic.com/jobs)
+- [X](https://x.ai/careers/open-roles?location=seattle%252C+wa&dept=4047058007,4052172007,4046295007,4024733007,4062428007,4046295007,4052172007,4046294007,4042930007)
+- [Oura](https://ouraring.com/careers#open-positions)
+- [Snap](https://careers.snap.com/jobs)
+- [Circle](https://circle.so/careers#open-roles)
+
 ## Local
 
 - [City of Lynnwood](https://www.governmentjobs.com/careers/lynnwood)
@@ -49,16 +92,7 @@
 - [Stripe Seattle](https://stripe.com/jobs/search?teams=Infrastructure+%26+Corporate+Tech&office_locations=North+America--Seattle)
 - [FBI](https://apply.fbijobs.gov/psc/ps/EMPLOYEE/HRMS/c/HRS_HRAM_FL.HRS_CG_SEARCH_FL.GBL?Page=HRS_APP_SCHJOB_FL&Action=U)
 - [CIA](https://www.cia.gov/ehl/careers)
-- [Nintendo](https://careers.nintendo.com/job-openings/)
 - [VRChat](https://jobs.lever.co/vrchat)
 
-## Tech
 
-- [Anthropic](https://www.anthropic.com/jobs)
-- [X](https://x.ai/careers/open-roles?location=seattle%252C+wa&dept=4047058007,4052172007,4046295007,4024733007,4062428007,4046295007,4052172007,4046294007,4042930007)
-- [Redfin data science](https://careers.redfin.com/us/en/c/data-science-analytics-jobs)
-- [Redfin Engineering](https://careers.redfin.com/us/en/c/engineering-product-jobs)
-- [Oura](https://ouraring.com/careers#open-positions)
-- [Snap](https://careers.snap.com/jobs)
-- [Circle](https://circle.so/careers#open-roles)
 
