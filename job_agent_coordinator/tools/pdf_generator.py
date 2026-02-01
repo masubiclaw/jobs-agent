@@ -928,7 +928,8 @@ def generate_resume_pdf(
     content: str,
     company: str,
     profile_name: str = "Candidate",
-    output_dir: Optional[Path] = None
+    output_dir: Optional[Path] = None,
+    pre_parsed_sections: Optional[Dict[str, Any]] = None
 ) -> str:
     """
     Generate an aesthetically pleasing PDF resume with automatic single-page fitting.
@@ -949,6 +950,7 @@ def generate_resume_pdf(
         company: Company name for filename
         profile_name: Candidate name
         output_dir: Output directory (default: generated_documents/)
+        pre_parsed_sections: Optional pre-parsed sections dict (skips parsing if provided)
     
     Returns:
         Path to generated PDF file
@@ -965,8 +967,13 @@ def generate_resume_pdf(
     filepath = output_dir / filename
     logger.info(f"  Output file: {filepath}")
     
-    # Parse content into sections (do this once)
-    sections = _parse_resume_sections(content)
+    # Use pre-parsed sections if provided, otherwise parse content
+    if pre_parsed_sections is not None:
+        logger.info("  Using pre-parsed sections")
+        sections = pre_parsed_sections
+    else:
+        # Parse content into sections (do this once)
+        sections = _parse_resume_sections(content)
     
     # Try each style adjustment level until content fits
     selected_level = 0

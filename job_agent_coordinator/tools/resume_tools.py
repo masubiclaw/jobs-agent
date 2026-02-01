@@ -12,8 +12,15 @@ from google.adk.tools import FunctionTool
 
 from .profile_store import get_store
 from .job_cache import get_cache
-from .document_generator import generate_resume_content, generate_cover_letter_content
-from .document_critic import critique_document, format_critique_feedback, CritiqueResult
+from .document_generator import (
+    generate_resume_content, generate_cover_letter_content,
+    generate_resume_by_sections, assemble_sections, RESUME_SECTIONS
+)
+from .document_critic import (
+    critique_document, format_critique_feedback, CritiqueResult,
+    critique_resume_sections, format_section_feedback, identify_sections_from_feedback,
+    SectionCritiqueResult
+)
 from .pdf_generator import generate_resume_pdf, generate_cover_letter_pdf, validate_single_page
 
 logger = logging.getLogger(__name__)
@@ -145,6 +152,134 @@ def _run_generation_loop(
     return content, critique
 
 
+def _run_section_generation_loop(
+    profile: Dict[str, Any],
+    job: Dict[str, Any],
+    max_iterations: int = None,
+) -> tuple:
+    """
+    Run section-by-section generation with targeted regeneration.
+    
+    Two-phase approach:
+    - Phase 1: Generate and critique each section individually, regenerate only failed sections
+    - Phase 2: Assemble and run whole-document critique, fix identified sections
+    
+    Args:
+        profile: User profile dictionary
+        job: Job posting dictionary
+        max_iterations: Maximum iterations per phase (uses global setting if not specified)
+    
+    Returns:
+        Tuple of (content, section_critiques, final_critique)
+    """
+    if max_iterations is None:
+        max_iterations = get_max_iterations()
+    
+    # Phase 1: Section-level generation and critique
+    logger.info("=== Phase 1: Section-by-section generation ===")
+    
+    # Initial generation of all sections
+    sections = generate_resume_by_sections(profile, job)
+    section_critiques = {}
+    
+    for iteration in range(max_iterations):
+        logger.info(f"Section critique iteration {iteration + 1}/{max_iterations}")
+        
+        # Critique all sections individually
+        section_critiques = critique_resume_sections(sections, profile, job)
+        
+        # Find failed sections
+        failed_sections = [
+            name for name, result in section_critiques.items()
+            if not result.passed
+        ]
+        
+        if not failed_sections:
+            logger.info(f"All sections passed on iteration {iteration + 1}")
+            break
+        
+        logger.info(f"Failed sections: {failed_sections}")
+        
+        # Build feedback for failed sections
+        feedback_by_section = {}
+        for section_name in failed_sections:
+            feedback_by_section[section_name] = format_section_feedback(
+                section_critiques[section_name]
+            )
+        
+        # Regenerate ONLY failed sections
+        sections = generate_resume_by_sections(
+            profile, job,
+            existing_sections=sections,
+            sections_to_regenerate=failed_sections,
+            feedback_by_section=feedback_by_section
+        )
+    
+    # Log section critique summary
+    for name, critique in section_critiques.items():
+        status = "✓" if critique.passed else "✗"
+        logger.info(f"  {status} {name}: score={critique.score}")
+    
+    # Phase 2: Whole-document critique
+    logger.info("=== Phase 2: Whole-document critique ===")
+    
+    final_critique = None
+    
+    for iteration in range(max_iterations):
+        # Assemble sections into full document
+        content = assemble_sections(sections)
+        
+        logger.info(f"Whole-doc critique iteration {iteration + 1}/{max_iterations}")
+        
+        # Run existing whole-document critique
+        final_critique = critique_document(content, "resume", profile, job)
+        
+        logger.info(
+            f"Whole-doc scores - Fact: {final_critique.fact_score}%, "
+            f"Keyword: {final_critique.keyword_score}%, "
+            f"ATS: {final_critique.ats_score}%, "
+            f"Grammar: {final_critique.grammar_score}%, "
+            f"Overall: {final_critique.overall_score}%"
+        )
+        
+        if final_critique.passed:
+            logger.info(f"Document passed whole-doc critique on iteration {iteration + 1}")
+            break
+        
+        # Identify which sections need fixes based on whole-doc feedback
+        sections_to_fix = identify_sections_from_feedback(final_critique)
+        logger.info(f"Sections to fix based on whole-doc feedback: {sections_to_fix}")
+        
+        # Build feedback for those sections
+        whole_doc_feedback = format_critique_feedback(final_critique)
+        feedback_by_section = {name: whole_doc_feedback for name in sections_to_fix}
+        
+        # Regenerate affected sections
+        sections = generate_resume_by_sections(
+            profile, job,
+            existing_sections=sections,
+            sections_to_regenerate=sections_to_fix,
+            feedback_by_section=feedback_by_section
+        )
+        
+        # Re-critique those sections
+        for section_name in sections_to_fix:
+            section_critiques[section_name] = critique_resume_sections(
+                {section_name: sections[section_name]}, profile, job
+            ).get(section_name)
+    
+    # Final assembly
+    content = assemble_sections(sections)
+    
+    if not final_critique.passed:
+        logger.warning(
+            f"Document did not pass all checks after {max_iterations} phase-2 iterations. "
+            f"Proceeding with best effort."
+        )
+    
+    return content, section_critiques, final_critique
+
+
 def generate_resume(job_id: str, profile_id: str = "") -> str:
     """
     Generate a tailored resume PDF for a specific job.
@@ -181,13 +316,14 @@ def generate_resume(job_id: str, profile_id: str = "") -> str:
             # Run generation loop (with page feedback if not first attempt)
             if page_feedback:
                 logger.info(f"Page fitting attempt {page_attempt + 1}: regenerating with length feedback")
-                # Generate with page fitting feedback
+                # Generate with page fitting feedback - regenerate experience section
                 gen_result = generate_resume_content(profile, job, feedback=page_feedback)
                 content = gen_result["content"]
                 # Critique the new content
                 critique = critique_document(content, "resume", profile, job)
             else:
-                content, critique = _run_generation_loop("resume", profile, job)
+                # Use new section-based generation
+                content, section_critiques, critique = _run_section_generation_loop(profile, job)
             
             # Generate PDF
             pdf_path = generate_resume_pdf(

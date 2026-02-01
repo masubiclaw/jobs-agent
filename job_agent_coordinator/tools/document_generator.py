@@ -30,6 +30,10 @@ TEMPLATE_ARTIFACTS = [
     r'~\d+\s*words?',
     # Instruction markers (parenthetical hints)
     r'\(\d+-\d+ sentences[^)]*\)',
+    # Word count lines that LLM sometimes adds
+    r'^Word Count:?\s*\d+\s*$',
+    r'^\*?Word Count:?\s*\d+\*?\s*$',
+    r'^Total Words?:?\s*\d+\s*$',
 ]
 
 # Section markers with instructions - replace with simple markers (for PDF parsing)
@@ -133,6 +137,44 @@ def _sanitize_characters(content: str) -> str:
     return result
 
 
+def _clean_markdown(content: str) -> str:
+    """
+    Remove markdown formatting from LLM-generated content.
+    
+    LLMs often add markdown despite being told not to. This removes:
+    - **bold** and __bold__
+    - *italic* and _italic_
+    - # headers
+    - ``` code blocks
+    
+    Args:
+        content: Raw text content
+    
+    Returns:
+        Content with markdown formatting removed
+    """
+    if not content:
+        return ""
+    
+    result = content
+    
+    # Remove bold markers
+    result = re.sub(r'\*\*([^*]+)\*\*', r'\1', result)  # **bold**
+    result = re.sub(r'__([^_]+)__', r'\1', result)      # __bold__
+    
+    # Remove italic markers (but preserve underscores in words like snake_case)
+    result = re.sub(r'(?<!\w)\*([^*]+)\*(?!\w)', r'\1', result)  # *italic*
+    result = re.sub(r'(?<!\w)_([^_]+)_(?!\w)', r'\1', result)    # _italic_
+    
+    # Remove header markers at start of lines
+    result = re.sub(r'^#{1,6}\s+', '', result, flags=re.MULTILINE)
+    
+    # Remove code block markers
+    result = re.sub(r'```[^\n]*\n?', '', result)
+    
+    return result
+
+
 def _clean_template_artifacts(content: str) -> str:
     """
     Remove template artifacts, sanitize characters, and clean generated content.
@@ -152,6 +194,9 @@ def _clean_template_artifacts(content: str) -> str:
     # First, sanitize problematic Unicode characters (smart quotes, em-dashes, etc.)
     cleaned = _sanitize_characters(content)
     
+    # Remove markdown formatting (LLMs often add it despite instructions)
+    cleaned = _clean_markdown(cleaned)
+    
     # Replace section markers with instructions -> simple markers
     # e.g., [OPENING - 2-3 sentences, ~50 words] -> [OPENING]
     for pattern, replacement in SECTION_MARKER_REPLACEMENTS:
@@ -159,7 +204,7 @@ def _clean_template_artifacts(content: str) -> str:
     
     # Then remove pure artifacts (placeholders, hints)
     for pattern in TEMPLATE_ARTIFACTS:
-        cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE | re.MULTILINE)
     
     # Clean up excessive whitespace left by removals
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
@@ -316,6 +361,228 @@ Location: {job.get('location', '')}
 Job Description:
 {job.get('description', 'No description available')[:3000]}
 """
+
+
+# Resume sections in order
+RESUME_SECTIONS = ["header", "summary", "skills", "experience", "education", "publications"]
+
+# Section-specific prompts for targeted generation
+SECTION_PROMPTS = {
+    "header": """Generate ONLY the header section for a resume.
+
+PROFILE:
+Name: {name}
+Email: {email}
+Phone: {phone}
+Location: {location}
+
+OUTPUT FORMAT (follow exactly):
+[HEADER]
+{name}
+{email} | {phone} | {location}
+
+FACTUAL ACCURACY RULES (CRITICAL):
+1. Use EXACTLY the name, email, phone, and location provided above
+2. Do NOT add titles, credentials, or suffixes not in profile
+3. Do NOT add LinkedIn, GitHub, or portfolio links unless provided
+
+FABRICATION EXAMPLES (these cause failure):
+- Profile: "John Smith" -> Resume: "John Smith, PhD" (WRONG - credential added)
+- Profile has no LinkedIn -> Resume adds LinkedIn URL (WRONG - invented)
+""",
+
+    "summary": """Generate ONLY the professional summary section for a resume.
+
+PROFILE SUMMARY:
+{profile_summary}
+
+EXPERIENCE HISTORY (for calculating years):
+{experience}
+
+TARGET JOB:
+Title: {job_title}
+Company: {job_company}
+Description: {job_description}
+
+{feedback_section}
+
+OUTPUT FORMAT (follow exactly):
+[SUMMARY]
+{{2-3 sentences tailored to the job, 40-60 words}}
+
+FACTUAL ACCURACY RULES (CRITICAL - violations cause failure):
+1. Reference ONLY companies that appear in the experience list above
+2. Reference ONLY job titles that appear in the experience list above
+3. Do NOT invent years of experience - calculate from the earliest start date to present
+4. Do NOT claim expertise in technologies not mentioned in profile
+5. Do NOT add certifications, degrees, or achievements not in profile
+
+CALCULATING YEARS OF EXPERIENCE:
+- Look at the earliest start date in experience history
+- Calculate years from that date to present (2026)
+- Round to nearest whole number
+- Example: If earliest job started 2018, say "8 years of experience"
+
+RULES:
+- Write 2-3 impactful sentences (40-60 words total)
+- Highlight experience relevant to the target job
+- Use ONLY facts from the profile summary and experience
+- No fluff phrases like "results-driven professional", "passionate about"
+- NO markdown formatting (no **bold**, no *italic*)
+
+FABRICATION EXAMPLES (these cause failure):
+- Profile shows jobs from 2020-2026 -> "10+ years of experience" (WRONG - only 6 years)
+- Profile has no AWS experience -> "cloud infrastructure expert" (WRONG - not in profile)
+- Profile shows "Engineer" title -> "Senior Engineer with..." (WRONG - title upgraded)
+""",
+
+    "skills": """Generate ONLY the skills section for a resume.
+
+AVAILABLE SKILLS FROM PROFILE (ONLY use these):
+{skills}
+
+TARGET JOB:
+Title: {job_title}
+Company: {job_company}
+Key Requirements: {job_keywords}
+
+{feedback_section}
+
+OUTPUT FORMAT (follow exactly):
+[SKILLS]
+{{Comma-separated list of 12-18 relevant skills}}
+
+FACTUAL ACCURACY RULES (CRITICAL):
+1. ONLY include skills that appear in the AVAILABLE SKILLS list above
+2. Use EXACT skill names as written - do NOT paraphrase or substitute
+3. Do NOT add skills the job requires if they are NOT in the profile
+4. Better to have fewer accurate skills than more fabricated ones
+
+RULES:
+- Select 12-18 skills MOST relevant to the target job
+- Put most relevant skills first (those matching job requirements)
+- NO markdown formatting
+
+FABRICATION EXAMPLES (these cause failure):
+- Profile has "Python" -> Resume adds "Python 3.11" (WRONG - version invented)
+- Profile has "AWS" -> Resume adds "AWS, Azure, GCP" (WRONG - Azure/GCP not in profile)
+- Job requires "Kubernetes" but profile doesn't have it -> Adding "Kubernetes" (WRONG)
+- Profile has "React" -> Resume says "React.js, React Native" (WRONG - only "React" is in profile)
+""",
+
+    "experience": """Generate ONLY the experience section for a resume.
+
+WORK EXPERIENCE FROM PROFILE:
+{experience}
+
+TARGET JOB:
+Title: {job_title}
+Company: {job_company}
+Description: {job_description}
+
+{feedback_section}
+
+OUTPUT FORMAT (follow exactly):
+[EXPERIENCE]
+{{Title}} | {{Company}} | {{Start Date}} - {{End Date}}
+- {{Achievement bullet with action verb, 15-25 words}}
+- {{Achievement bullet with action verb, 15-25 words}}
+- {{Achievement bullet with action verb, 15-25 words}}
+
+{{Repeat for 2-3 more relevant roles}}
+
+FACTUAL ACCURACY RULES (CRITICAL - violations cause failure):
+1. COPY job title EXACTLY as written in profile - do NOT paraphrase or upgrade
+2. COPY company name EXACTLY as written in profile - do NOT abbreviate or change
+3. ONLY include metrics/numbers that appear VERBATIM in profile description
+4. If NO metric exists in profile, describe the work WITHOUT inventing numbers
+5. Achievements MUST be derived from profile description text, not invented
+6. Do NOT add percentages, dollar amounts, or team sizes unless explicitly stated
+
+STRICT RULES:
+1. Include 3-4 most relevant roles with 3-4 bullets each
+2. Use EXACT dates from profile - format as "Mon YYYY" (e.g., "Aug 2025")
+3. Convert: "2025-08" → "Aug 2025", "present" → "Present"
+4. Do NOT change, estimate, or round any dates
+5. Start EVERY bullet with a strong ACTION VERB (Built, Led, Designed, Implemented, etc.)
+6. Each bullet: 15-25 words - be specific but do NOT invent details
+7. NO fluff words: avoid "responsible for", "helped with", "worked on"
+8. NO markdown formatting (no **bold**, no *italic*)
+
+WHAT IS ALLOWED vs FABRICATED:
+- ALLOWED: Reordering words - "Led team of 5" -> "Led 5-person team"
+- ALLOWED: Condensing - "responsible for building" -> "Built"
+- FABRICATED: Inventing metrics - Profile has no % -> Resume says "reduced latency 40%"
+- FABRICATED: Upgrading titles - "Engineer" -> "Senior Engineer"
+- FABRICATED: Adding specifics - Profile says "improved performance" -> Resume says "improved by 50%"
+
+If profile description lacks metrics, write achievement WITHOUT numbers:
+- Profile: "Improved system performance"
+- GOOD: "Optimized system performance through caching and query improvements"
+- BAD: "Improved system performance by 40%" (metric invented)
+""",
+
+    "education": """Generate ONLY the education section for a resume.
+
+EDUCATION FROM PROFILE:
+{education}
+
+{feedback_section}
+
+OUTPUT FORMAT (follow exactly):
+[EDUCATION]
+{{Degree}}, {{Institution}}, {{Year}}
+
+FACTUAL ACCURACY RULES (CRITICAL):
+1. COPY degree names EXACTLY as written in profile
+2. COPY institution names EXACTLY as written in profile
+3. COPY years EXACTLY as written in profile
+4. Do NOT upgrade degrees (e.g., "BS" to "MS")
+5. Do NOT add certifications or courses not in profile
+
+RULES:
+- Use ONLY education information from the profile
+- Keep it concise - one line per degree
+- NO markdown formatting
+
+FABRICATION EXAMPLES (these cause failure):
+- Profile: "BS Computer Science" -> Resume: "MS Computer Science" (WRONG - upgraded)
+- Profile: "Stanford University" -> Resume: "Stanford University, summa cum laude" (WRONG - honors invented)
+- Profile has no MBA -> Resume: "MBA, Business Administration" (WRONG - degree invented)
+""",
+
+    "publications": """Generate ONLY the publications section for a resume (if applicable).
+
+PUBLICATIONS FROM PROFILE:
+{publications}
+
+TARGET JOB:
+Title: {job_title}
+Company: {job_company}
+
+{feedback_section}
+
+OUTPUT FORMAT (follow exactly, or empty if no publications):
+[PUBLICATIONS]
+{{Title}} - {{Venue/Publisher}}, {{Year}}
+
+FACTUAL ACCURACY RULES (CRITICAL):
+1. COPY publication titles EXACTLY as written in profile
+2. COPY venue/publisher names EXACTLY as written in profile
+3. COPY years EXACTLY as written in profile
+4. Do NOT invent any publications
+5. If profile has no publications, output ONLY: [PUBLICATIONS]
+
+RULES:
+- Include ONLY if publications exist in profile AND are relevant to the job
+- NO markdown formatting
+
+FABRICATION EXAMPLES (these cause failure):
+- Profile has no publications -> Resume lists any publication (WRONG - invented)
+- Profile: "Conference Paper at ICML" -> Resume: "Best Paper at ICML" (WRONG - award invented)
+- Profile: "2020" -> Resume: "2021" (WRONG - year changed)
+""",
+}
 
 
 RESUME_SYSTEM_PROMPT = """You are an expert resume writer. Generate a professional, ATS-optimized resume.
@@ -553,3 +820,187 @@ Generate the cover letter now. Remember: 250-350 words max, only facts from the 
         "company": job.get("company", ""),
         "word_count": len(content.split()),
     }
+
+
+def _extract_section_data(profile: Dict[str, Any], job: Dict[str, Any]) -> Dict[str, str]:
+    """
+    Extract and format data needed for section-specific prompts.
+    
+    Returns dict with formatted strings for each section prompt template.
+    """
+    # Extract skills
+    skills = profile.get("skills", [])
+    if skills and isinstance(skills[0], dict):
+        skill_names = [s.get("name", "") for s in skills]
+    else:
+        skill_names = skills
+    
+    # Format experience
+    experience_lines = []
+    for exp in profile.get("experience", [])[:6]:
+        title = exp.get("title", "")
+        company = exp.get("company", "")
+        start = exp.get("start_date", "")
+        end = exp.get("end_date", "")
+        desc = exp.get("description", "")
+        experience_lines.append(f"""
+Title: {title}
+Company: {company}
+Dates: {start} to {end}
+Description: {desc}
+""")
+    
+    # Extract education from notes
+    notes = profile.get("notes", "")
+    education_section = ""
+    if "EDUCATION:" in notes:
+        edu_start = notes.find("EDUCATION:")
+        edu_end = notes.find("CERTIFICATIONS:", edu_start)
+        if edu_end == -1:
+            edu_end = notes.find("PUBLICATIONS:", edu_start)
+        if edu_end == -1:
+            edu_end = len(notes)
+        education_section = notes[edu_start:edu_end].strip()
+    
+    # Extract publications from notes
+    pub_section = ""
+    if "PUBLICATIONS:" in notes:
+        pub_start = notes.find("PUBLICATIONS:")
+        pub_section = notes[pub_start:].strip()
+    
+    # Extract job keywords
+    job_desc = job.get("description", "").lower()
+    job_keywords = []
+    tech_keywords = [
+        "python", "java", "javascript", "typescript", "go", "rust", "c++",
+        "react", "angular", "vue", "node", "django", "flask",
+        "aws", "azure", "gcp", "kubernetes", "docker", "terraform",
+        "sql", "postgresql", "mongodb", "redis",
+        "machine learning", "ml", "ai", "deep learning",
+        "agile", "scrum", "devops", "ci/cd",
+    ]
+    for kw in tech_keywords:
+        if kw in job_desc:
+            job_keywords.append(kw)
+    
+    return {
+        "name": profile.get("name", ""),
+        "email": profile.get("email", ""),
+        "phone": profile.get("phone", ""),
+        "location": profile.get("location", ""),
+        "profile_summary": profile.get("resume", {}).get("summary", ""),
+        "skills": ", ".join(skill_names),
+        "experience": "\n".join(experience_lines),
+        "education": education_section,
+        "publications": pub_section,
+        "job_title": job.get("title", ""),
+        "job_company": job.get("company", ""),
+        "job_description": job.get("description", "")[:2000],
+        "job_keywords": ", ".join(job_keywords[:15]),
+    }
+
+
+def generate_section(
+    section_name: str,
+    profile: Dict[str, Any],
+    job: Dict[str, Any],
+    feedback: Optional[str] = None
+) -> str:
+    """
+    Generate a single resume section using LLM.
+    
+    Args:
+        section_name: One of RESUME_SECTIONS (header, summary, skills, experience, education, publications)
+        profile: User profile dictionary
+        job: Job posting dictionary
+        feedback: Optional feedback from critic for refinement
+    
+    Returns:
+        Generated section content (cleaned of artifacts)
+    """
+    if section_name not in SECTION_PROMPTS:
+        raise ValueError(f"Unknown section: {section_name}. Must be one of {RESUME_SECTIONS}")
+    
+    # Extract data for prompt
+    data = _extract_section_data(profile, job)
+    
+    # Add feedback if provided
+    feedback_section = ""
+    if feedback:
+        feedback_section = f"""
+FEEDBACK FROM PREVIOUS ATTEMPT (address these issues):
+{feedback}
+"""
+    data["feedback_section"] = feedback_section
+    
+    # Format the section-specific prompt
+    prompt = SECTION_PROMPTS[section_name].format(**data)
+    
+    logger.info(f"Generating section: {section_name}")
+    
+    raw_content = _call_ollama(prompt, temperature=0.3)
+    content = _clean_template_artifacts(raw_content)
+    
+    return content
+
+
+def generate_resume_by_sections(
+    profile: Dict[str, Any],
+    job: Dict[str, Any],
+    existing_sections: Optional[Dict[str, str]] = None,
+    sections_to_regenerate: Optional[List[str]] = None,
+    feedback_by_section: Optional[Dict[str, str]] = None
+) -> Dict[str, str]:
+    """
+    Generate resume section by section, optionally regenerating specific sections.
+    
+    Args:
+        profile: User profile dictionary
+        job: Job posting dictionary
+        existing_sections: Previously generated sections to keep
+        sections_to_regenerate: List of section names to regenerate (None = all)
+        feedback_by_section: Dict mapping section name to feedback string
+    
+    Returns:
+        Dict mapping section name to generated content
+    """
+    sections = existing_sections.copy() if existing_sections else {}
+    feedback_by_section = feedback_by_section or {}
+    
+    # Determine which sections to generate
+    if sections_to_regenerate is None:
+        # Generate all sections
+        sections_to_generate = RESUME_SECTIONS
+    else:
+        sections_to_generate = sections_to_regenerate
+    
+    logger.info(f"Generating sections: {sections_to_generate}")
+    
+    for section_name in sections_to_generate:
+        feedback = feedback_by_section.get(section_name)
+        sections[section_name] = generate_section(section_name, profile, job, feedback)
+    
+    return sections
+
+
+def assemble_sections(sections: Dict[str, str]) -> str:
+    """
+    Assemble individual sections into a complete resume document.
+    
+    Args:
+        sections: Dict mapping section name to content
+    
+    Returns:
+        Complete resume content as a single string
+    """
+    parts = []
+    
+    for section_name in RESUME_SECTIONS:
+        content = sections.get(section_name, "")
+        if content and content.strip():
+            # Ensure section has proper marker
+            if not content.strip().startswith(f"[{section_name.upper()}]"):
+                content = f"[{section_name.upper()}]\n{content}"
+            parts.append(content.strip())
+    
+    return "\n\n".join(parts)

@@ -56,3 +56,9 @@
 
 - [Anthropic](https://www.anthropic.com/jobs)
 - [X](https://x.ai/careers/open-roles?location=seattle%252C+wa&dept=4047058007,4052172007,4046295007,4024733007,4062428007,4046295007,4052172007,4046294007,4042930007)
+- [Redfin data science](https://careers.redfin.com/us/en/c/data-science-analytics-jobs)
+- [Redfin Engineering](https://careers.redfin.com/us/en/c/engineering-product-jobs)
+- [Oura](https://ouraring.com/careers#open-positions)
+- [Snap](https://careers.snap.com/jobs)
+- [Circle](https://circle.so/careers#open-roles)
+

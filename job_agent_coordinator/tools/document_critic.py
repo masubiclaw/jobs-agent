@@ -183,6 +183,60 @@ def _check_paragraph_structure(content: str, doc_type: str) -> Tuple[bool, str]:
 
 
 @dataclass
+class SectionCritiqueResult:
+    """Result of critiquing a single resume section."""
+    section_name: str
+    passed: bool
+    score: int  # 0-100
+    issues: List[str]
+    suggestions: List[str]
+    has_artifacts: bool = False
+    has_markdown: bool = False
+    has_bad_chars: bool = False
+    dates_valid: bool = True
+    invalid_dates: Optional[List[str]] = None
+    grammar_score: int = 100
+    grammar_issues: Optional[List[str]] = None
+    
+    def __post_init__(self):
+        if self.invalid_dates is None:
+            self.invalid_dates = []
+        if self.grammar_issues is None:
+            self.grammar_issues = []
+
+
+# Section-specific validation rules
+SECTION_RULES = {
+    "header": {
+        "required_fields": ["name"],
+        "max_words": 50,
+        "checks": ["contact_info_present"],
+    },
+    "summary": {
+        "min_words": 30,
+        "max_words": 80,
+        "checks": ["no_fabrication", "relevant_to_job"],
+    },
+    "skills": {
+        "min_items": 10,
+        "max_items": 20,
+        "checks": ["skills_from_profile"],
+    },
+    "experience": {
+        "min_roles": 2,
+        "max_roles": 5,
+        "checks": ["dates_match_profile", "no_fabricated_metrics", "bullet_format", "action_verbs"],
+    },
+    "education": {
+        "checks": ["matches_profile_exactly"],
+    },
+    "publications": {
+        "checks": ["matches_profile_exactly"],
+    },
+}
+
+
+@dataclass
 class CritiqueResult:
     """Result of document critique."""
     fact_score: int  # 0-100, must be 100 to pass
@@ -832,3 +886,338 @@ def format_critique_feedback(critique: CritiqueResult) -> str:
             feedback_parts.append(f"SUGGESTIONS: {'; '.join(non_grammar_suggestions[:3])}")
     
     return "\n".join(feedback_parts)
+
+
+def _check_section_skills(content: str, profile: Dict[str, Any]) -> Tuple[bool, List[str]]:
+    """
+    Validate that skills in content are from the profile.
+    
+    Returns:
+        Tuple of (all_valid, list of fabricated skills)
+    """
+    # Extract profile skills
+    profile_skills = set()
+    for skill in profile.get("skills", []):
+        if isinstance(skill, dict):
+            profile_skills.add(skill.get("name", "").lower())
+        else:
+            profile_skills.add(str(skill).lower())
+    
+    # Extract skills from content (assumes comma-separated after [SKILLS])
+    content_lower = content.lower()
+    skills_match = re.search(r'\[skills\]\s*\n?(.+?)(?:\n\n|\n\[|$)', content_lower, re.DOTALL)
+    if not skills_match:
+        return True, []
+    
+    skills_text = skills_match.group(1)
+    content_skills = [s.strip() for s in skills_text.split(",") if s.strip()]
+    
+    fabricated = []
+    for skill in content_skills:
+        skill_clean = skill.strip().lower()
+        # Check if any profile skill matches (partial match for variations)
+        if not any(ps in skill_clean or skill_clean in ps for ps in profile_skills):
+            fabricated.append(skill)
+    
+    return len(fabricated) == 0, fabricated
+
+
+def _check_bullet_format(content: str) -> Tuple[bool, List[str]]:
+    """
+    Check if experience bullets start with action verbs.
+    
+    Returns:
+        Tuple of (all_valid, list of problematic bullets)
+    """
+    # Common weak phrases to avoid
+    weak_phrases = [
+        "responsible for", "helped with", "worked on", "assisted",
+        "was involved", "participated in", "handled"
+    ]
+    
+    issues = []
+    
+    # Find all bullet points
+    bullets = re.findall(r'^-\s+(.+)$', content, re.MULTILINE)
+    
+    for bullet in bullets:
+        bullet_lower = bullet.lower()
+        for phrase in weak_phrases:
+            if bullet_lower.startswith(phrase):
+                issues.append(f"Bullet starts with weak phrase: '{bullet[:50]}...'")
+                break
+    
+    return len(issues) == 0, issues
+
+
+def _check_contact_info(content: str, profile: Dict[str, Any]) -> Tuple[bool, List[str]]:
+    """
+    Check if header has contact info.
+    
+    Returns:
+        Tuple of (has_contact, list of missing items)
+    """
+    missing = []
+    content_lower = content.lower()
+    
+    name = profile.get("name", "").lower()
+    email = profile.get("email", "").lower()
+    phone = profile.get("phone", "")
+    
+    if name and name not in content_lower:
+        missing.append("name")
+    if email and email not in content_lower:
+        missing.append("email")
+    if phone and phone not in content:
+        missing.append("phone")
+    
+    return len(missing) == 0, missing
+
+
+def critique_section(
+    section_name: str,
+    content: str,
+    profile: Dict[str, Any],
+    job: Dict[str, Any]
+) -> SectionCritiqueResult:
+    """
+    Critique a single resume section.
+    
+    Args:
+        section_name: Name of section (header, summary, skills, etc.)
+        content: Section content
+        profile: User profile for fact verification
+        job: Job posting for relevance check
+    
+    Returns:
+        SectionCritiqueResult with score and issues
+    """
+    issues = []
+    suggestions = []
+    score = 100
+    
+    rules = SECTION_RULES.get(section_name, {})
+    
+    # 1. Check for artifacts
+    has_artifacts, found_artifacts = _check_for_artifacts(content)
+    if has_artifacts:
+        issues.append(f"Template artifacts found: {', '.join(found_artifacts[:3])}")
+        score -= 30
+    
+    # 2. Check for markdown
+    has_markdown, found_markdown = _check_for_markdown(content)
+    if has_markdown:
+        issues.append(f"Markdown found: {', '.join(found_markdown[:3])}")
+        score -= 20
+    
+    # 3. Check for bad characters
+    has_bad_chars, found_bad_chars = _check_for_bad_characters(content)
+    if has_bad_chars:
+        issues.append(f"Bad characters: {', '.join(found_bad_chars[:3])}")
+        score -= 10
+    
+    # 4. Word count checks
+    word_count = len(content.split())
+    if "min_words" in rules and word_count < rules["min_words"]:
+        issues.append(f"Too short: {word_count} words (min {rules['min_words']})")
+        suggestions.append(f"Expand {section_name} to at least {rules['min_words']} words")
+        score -= 15
+    if "max_words" in rules and word_count > rules["max_words"]:
+        issues.append(f"Too long: {word_count} words (max {rules['max_words']})")
+        suggestions.append(f"Reduce {section_name} to under {rules['max_words']} words")
+        score -= 10
+    
+    # 5. Section-specific checks
+    dates_valid = True
+    invalid_dates = []
+    grammar_score = 100
+    grammar_issues = []
+    
+    checks = rules.get("checks", [])
+    
+    if "contact_info_present" in checks:
+        has_contact, missing = _check_contact_info(content, profile)
+        if not has_contact:
+            issues.append(f"Missing contact info: {', '.join(missing)}")
+            score -= 20
+    
+    if "skills_from_profile" in checks:
+        skills_ok, fabricated = _check_section_skills(content, profile)
+        if not skills_ok:
+            issues.append(f"Skills not in profile: {', '.join(fabricated[:5])}")
+            suggestions.append("Use only skills from the profile")
+            score -= 25
+    
+    if "dates_match_profile" in checks:
+        dates_valid, valid, invalid_dates = _validate_dates(content, profile)
+        if not dates_valid:
+            issues.append(f"Invalid dates: {', '.join(invalid_dates)}")
+            suggestions.append("Use exact dates from profile (format: Mon YYYY)")
+            score -= 25
+    
+    if "bullet_format" in checks or "action_verbs" in checks:
+        bullets_ok, bullet_issues = _check_bullet_format(content)
+        if not bullets_ok:
+            issues.extend(bullet_issues[:3])
+            suggestions.append("Start bullets with strong action verbs")
+            score -= 15
+    
+    # Ensure score stays in valid range
+    score = max(0, min(100, score))
+    
+    # Determine pass/fail
+    passed = (
+        score >= 70 and
+        not has_artifacts and
+        not has_markdown and
+        dates_valid
+    )
+    
+    return SectionCritiqueResult(
+        section_name=section_name,
+        passed=passed,
+        score=score,
+        issues=issues,
+        suggestions=suggestions,
+        has_artifacts=has_artifacts,
+        has_markdown=has_markdown,
+        has_bad_chars=has_bad_chars,
+        dates_valid=dates_valid,
+        invalid_dates=invalid_dates,
+        grammar_score=grammar_score,
+        grammar_issues=grammar_issues,
+    )
+
+
+def critique_resume_sections(
+    sections: Dict[str, str],
+    profile: Dict[str, Any],
+    job: Dict[str, Any]
+) -> Dict[str, SectionCritiqueResult]:
+    """
+    Critique all resume sections and return results per section.
+    
+    Args:
+        sections: Dict mapping section name to content
+        profile: User profile for fact verification
+        job: Job posting for relevance check
+    
+    Returns:
+        Dict mapping section name to SectionCritiqueResult
+    """
+    results = {}
+    
+    for section_name, content in sections.items():
+        if content and content.strip():
+            results[section_name] = critique_section(section_name, content, profile, job)
+            logger.info(
+                f"Section '{section_name}': score={results[section_name].score}, "
+                f"passed={results[section_name].passed}"
+            )
+        else:
+            # Empty section - may be OK (e.g., publications)
+            results[section_name] = SectionCritiqueResult(
+                section_name=section_name,
+                passed=True,
+                score=100,
+                issues=[],
+                suggestions=[],
+            )
+    
+    return results
+
+
+def format_section_feedback(critique: SectionCritiqueResult) -> str:
+    """
+    Format section critique result as feedback string for regeneration.
+    
+    Args:
+        critique: SectionCritiqueResult to format
+    
+    Returns:
+        Formatted feedback string
+    """
+    feedback_parts = []
+    
+    if critique.has_artifacts:
+        feedback_parts.append("CRITICAL: Remove template artifacts - generate actual content")
+    
+    if critique.has_markdown:
+        feedback_parts.append("CRITICAL: Remove markdown formatting (**bold**, *italic*)")
+    
+    if critique.has_bad_chars:
+        feedback_parts.append("CHARACTERS: Use straight quotes and regular dashes only")
+    
+    if not critique.dates_valid and critique.invalid_dates:
+        feedback_parts.append(f"DATES: Fix incorrect dates: {', '.join(critique.invalid_dates)}. Use exact profile dates.")
+    
+    if critique.issues:
+        feedback_parts.append(f"ISSUES: {'; '.join(critique.issues[:3])}")
+    
+    if critique.suggestions:
+        feedback_parts.append(f"SUGGESTIONS: {'; '.join(critique.suggestions[:3])}")
+    
+    return "\n".join(feedback_parts)
+
+
+def identify_sections_from_feedback(critique: CritiqueResult) -> List[str]:
+    """
+    Identify which sections need to be regenerated based on whole-document critique.
+    
+    Analyzes the critique feedback to determine which sections are problematic.
+    
+    Args:
+        critique: CritiqueResult from whole-document critique
+    
+    Returns:
+        List of section names that need regeneration
+    """
+    sections_to_fix = []
+    
+    # Date issues -> experience section
+    if not critique.dates_valid:
+        if "experience" not in sections_to_fix:
+            sections_to_fix.append("experience")
+    
+    # Grammar issues - check which sections they affect
+    if critique.grammar_score < 90:
+        # Grammar issues could be in any section, but most likely in summary/experience
+        if "summary" not in sections_to_fix:
+            sections_to_fix.append("summary")
+        if "experience" not in sections_to_fix:
+            sections_to_fix.append("experience")
+    
+    # Fabricated facts -> experience section (most likely)
+    if critique.fabricated_facts:
+        if "experience" not in sections_to_fix:
+            sections_to_fix.append("experience")
+        if "skills" not in sections_to_fix:
+            sections_to_fix.append("skills")
+    
+    # Length issues
+    if not critique.length_compliant:
+        if "too short" in critique.length_feedback.lower():
+            # Need more content in experience/summary
+            if "experience" not in sections_to_fix:
+                sections_to_fix.append("experience")
+            if "summary" not in sections_to_fix:
+                sections_to_fix.append("summary")
+        elif "too long" in critique.length_feedback.lower():
+            # Need to trim experience mostly
+            if "experience" not in sections_to_fix:
+                sections_to_fix.append("experience")
+            if "skills" not in sections_to_fix:
+                sections_to_fix.append("skills")
+    
+    # Keyword issues -> skills and summary
+    if critique.keyword_score < 70:
+        if "skills" not in sections_to_fix:
+            sections_to_fix.append("skills")
+        if "summary" not in sections_to_fix:
+            sections_to_fix.append("summary")
+    
+    # If no specific sections identified, regenerate the most impactful ones
+    if not sections_to_fix:
+        sections_to_fix = ["experience", "summary"]
+    
+    return sections_to_fix

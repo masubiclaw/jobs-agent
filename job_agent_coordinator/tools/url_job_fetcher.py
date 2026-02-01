@@ -217,7 +217,63 @@ JSON:"""
             return None
         
         import json
-        job_data = json.loads(json_match.group())
+        json_str = json_match.group()
+        
+        # Clean control characters that break JSON parsing
+        # Replace literal newlines inside strings with escaped newlines
+        def clean_json_string(s: str) -> str:
+            """Clean JSON string to handle unescaped control characters."""
+            # First, try to fix unescaped newlines in string values
+            # This regex finds content between quotes and escapes newlines
+            cleaned = s
+            
+            # Replace problematic control characters
+            # Tab, newline, carriage return inside JSON strings
+            in_string = False
+            escape_next = False
+            result_chars = []
+            
+            for i, char in enumerate(s):
+                if escape_next:
+                    result_chars.append(char)
+                    escape_next = False
+                    continue
+                    
+                if char == '\\':
+                    result_chars.append(char)
+                    escape_next = True
+                    continue
+                    
+                if char == '"':
+                    in_string = not in_string
+                    result_chars.append(char)
+                    continue
+                
+                if in_string:
+                    # Escape control characters inside strings
+                    if char == '\n':
+                        result_chars.append('\\n')
+                    elif char == '\r':
+                        result_chars.append('\\r')
+                    elif char == '\t':
+                        result_chars.append('\\t')
+                    elif ord(char) < 32:
+                        # Other control characters - replace with space
+                        result_chars.append(' ')
+                    else:
+                        result_chars.append(char)
+                else:
+                    result_chars.append(char)
+            
+            return ''.join(result_chars)
+        
+        # Try parsing, if it fails, clean and retry
+        try:
+            job_data = json.loads(json_str)
+        except json.JSONDecodeError:
+            logger.info("   ⚠️ Cleaning JSON control characters...")
+            cleaned_json = clean_json_string(json_str)
+            job_data = json.loads(cleaned_json)
         
         # Add URL and metadata
         job_data["url"] = page_data.get("url", "")
@@ -253,8 +309,63 @@ JSON:"""
         return job_data
         
     except json.JSONDecodeError as e:
-        logger.error(f"❌ JSON parse error: {e}")
-        return None
+        logger.warning(f"   ⚠️ JSON parse failed: {e}")
+        # Fallback: try to extract fields using regex
+        logger.info("   🔄 Attempting regex fallback extraction...")
+        try:
+            job_data = {}
+            
+            # Extract title
+            title_match = re.search(r'"title"\s*:\s*"([^"]+)"', result)
+            if title_match:
+                job_data["title"] = title_match.group(1)
+            
+            # Extract company
+            company_match = re.search(r'"company"\s*:\s*"([^"]+)"', result)
+            if company_match:
+                job_data["company"] = company_match.group(1)
+            
+            # Extract location
+            location_match = re.search(r'"location"\s*:\s*"([^"]+)"', result)
+            if location_match:
+                job_data["location"] = location_match.group(1)
+            
+            # Extract salary
+            salary_match = re.search(r'"salary"\s*:\s*"([^"]+)"', result)
+            if salary_match:
+                job_data["salary"] = salary_match.group(1)
+            
+            # For description, use the page text as fallback
+            if job_data.get("title"):
+                job_data["description"] = page_data["text"][:5000]
+                job_data["url"] = page_data.get("url", "")
+                job_data["extracted_at"] = datetime.now().isoformat()
+                job_data["platform"] = "url_fetch"
+                job_data.setdefault("location", "Not specified")
+                job_data.setdefault("salary", "Not disclosed")
+                
+                # Try to get company from page title if not found
+                if not job_data.get("company"):
+                    page_title = page_data.get("title", "")
+                    if " at " in page_title:
+                        job_data["company"] = page_title.split(" at ")[-1].split(" - ")[0].strip()
+                    elif " - " in page_title:
+                        job_data["company"] = page_title.split(" - ")[1].strip()
+                    else:
+                        job_data["company"] = "Unknown Company"
+                
+                logger.info(f"   ✅ Fallback extraction succeeded")
+                logger.info(f"      Title: {job_data['title'][:50]}")
+                logger.info(f"      Company: {job_data['company']}")
+                return job_data
+            else:
+                logger.error("❌ Fallback extraction failed - no title found")
+                return None
+                
+        except Exception as fallback_error:
+            logger.error(f"❌ Fallback extraction failed: {fallback_error}")
+            return None
+            
     except requests.RequestException as e:
         logger.error(f"❌ LLM request failed: {e}")
         return None
