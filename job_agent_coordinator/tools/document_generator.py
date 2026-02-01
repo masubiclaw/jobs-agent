@@ -42,10 +42,100 @@ SECTION_MARKER_REPLACEMENTS = [
     (r'\[CLOSING\s*-\s*[^\]]*\]', '[CLOSING]'),
 ]
 
+# Character replacements for sanitizing LLM output
+# Maps problematic Unicode characters to their ASCII equivalents
+CHARACTER_REPLACEMENTS = {
+    # Smart/curly quotes to straight quotes
+    '\u2018': "'",   # Left single quote '
+    '\u2019': "'",   # Right single quote '
+    '\u201A': "'",   # Single low-9 quote ‚
+    '\u201B': "'",   # Single high-reversed-9 quote ‛
+    '\u2032': "'",   # Prime ′
+    '\u2035': "'",   # Reversed prime ‵
+    '\u201C': '"',   # Left double quote "
+    '\u201D': '"',   # Right double quote "
+    '\u201E': '"',   # Double low-9 quote „
+    '\u201F': '"',   # Double high-reversed-9 quote ‟
+    '\u2033': '"',   # Double prime ″
+    '\u2036': '"',   # Reversed double prime ‶
+    '\u00AB': '"',   # Left-pointing double angle «
+    '\u00BB': '"',   # Right-pointing double angle »
+    
+    # Dashes
+    '\u2013': '-',   # En-dash –
+    '\u2014': '--',  # Em-dash —
+    '\u2015': '--',  # Horizontal bar ―
+    '\u2012': '-',   # Figure dash ‒
+    '\u2010': '-',   # Hyphen ‐
+    '\u2011': '-',   # Non-breaking hyphen ‑
+    
+    # Ellipsis
+    '\u2026': '...',  # Horizontal ellipsis …
+    
+    # Spaces
+    '\u00A0': ' ',   # Non-breaking space
+    '\u2002': ' ',   # En space
+    '\u2003': ' ',   # Em space
+    '\u2004': ' ',   # Three-per-em space
+    '\u2005': ' ',   # Four-per-em space
+    '\u2006': ' ',   # Six-per-em space
+    '\u2007': ' ',   # Figure space
+    '\u2008': ' ',   # Punctuation space
+    '\u2009': ' ',   # Thin space
+    '\u200A': ' ',   # Hair space
+    '\u200B': '',    # Zero-width space (remove)
+    '\u202F': ' ',   # Narrow no-break space
+    '\u205F': ' ',   # Medium mathematical space
+    '\u3000': ' ',   # Ideographic space
+    '\uFEFF': '',    # BOM / Zero-width no-break space (remove)
+    
+    # Bullets and symbols
+    '\u2022': '-',   # Bullet •
+    '\u2023': '-',   # Triangular bullet ‣
+    '\u2043': '-',   # Hyphen bullet ⁃
+    '\u25AA': '-',   # Black small square ▪
+    '\u25CF': '-',   # Black circle ●
+    '\u25E6': '-',   # White bullet ◦
+    
+    # Other common substitutions
+    '\u00B7': '-',   # Middle dot ·
+    '\u2027': '-',   # Hyphenation point ‧
+    '\u00D7': 'x',   # Multiplication sign ×
+    '\u00F7': '/',   # Division sign ÷
+    '\u2212': '-',   # Minus sign −
+    '\u00B1': '+/-', # Plus-minus sign ±
+    '\u00AE': '(R)', # Registered trademark ®
+    '\u2122': '(TM)', # Trademark ™
+    '\u00A9': '(C)', # Copyright ©
+}
+
+
+def _sanitize_characters(content: str) -> str:
+    """
+    Replace problematic Unicode characters with ASCII equivalents.
+    
+    LLMs often generate smart quotes, em-dashes, and other Unicode characters
+    that can cause display issues or look inconsistent in PDFs.
+    
+    Args:
+        content: Raw text content
+    
+    Returns:
+        Sanitized content with ASCII-safe characters
+    """
+    if not content:
+        return ""
+    
+    result = content
+    for unicode_char, replacement in CHARACTER_REPLACEMENTS.items():
+        result = result.replace(unicode_char, replacement)
+    
+    return result
+
 
 def _clean_template_artifacts(content: str) -> str:
     """
-    Remove template artifacts and instruction markers from generated content.
+    Remove template artifacts, sanitize characters, and clean generated content.
     
     Preserves simple section markers like [OPENING], [BODY PARAGRAPH 1], [CLOSING]
     which are needed for PDF parsing. Only removes instructional text within markers.
@@ -54,14 +144,15 @@ def _clean_template_artifacts(content: str) -> str:
         content: Raw LLM-generated content (handles None/empty gracefully)
     
     Returns:
-        Cleaned content with artifacts removed but section markers preserved
+        Cleaned content with artifacts removed, characters sanitized, section markers preserved
     """
     if not content:
         return ""
     
-    cleaned = content
+    # First, sanitize problematic Unicode characters (smart quotes, em-dashes, etc.)
+    cleaned = _sanitize_characters(content)
     
-    # First, replace section markers with instructions -> simple markers
+    # Replace section markers with instructions -> simple markers
     # e.g., [OPENING - 2-3 sentences, ~50 words] -> [OPENING]
     for pattern, replacement in SECTION_MARKER_REPLACEMENTS:
         cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
@@ -179,7 +270,16 @@ def _format_profile_for_prompt(profile: Dict[str, Any]) -> str:
     cert_section = ""
     if "CERTIFICATIONS:" in notes:
         cert_start = notes.find("CERTIFICATIONS:")
-        cert_section = notes[cert_start:].strip()
+        cert_end = notes.find("PUBLICATIONS:", cert_start)
+        if cert_end == -1:
+            cert_end = len(notes)
+        cert_section = notes[cert_start:cert_end].strip()
+    
+    # Extract publications from notes
+    pub_section = ""
+    if "PUBLICATIONS:" in notes:
+        pub_start = notes.find("PUBLICATIONS:")
+        pub_section = notes[pub_start:].strip()
     
     return f"""CANDIDATE PROFILE (ONLY use facts from this profile):
 
@@ -200,6 +300,8 @@ Work Experience (use only these roles):
 {education_section}
 
 {cert_section}
+
+{pub_section}
 """
 
 
@@ -225,24 +327,31 @@ STRICT RULES - FACTS:
 4. If profile lacks relevant experience, work with what exists
 5. Tailor presentation of EXISTING facts to match job requirements
 
+STRICT RULES - DATES (CRITICAL):
+6. Use EXACT dates from the profile - do NOT change, estimate, or round them
+7. Format: "Mon YYYY" (e.g., "Aug 2025", "Oct 2023", "Present")
+8. Convert profile dates: "2025-08" → "Aug 2025", "present" → "Present"
+9. Do NOT invent, guess, or approximate any dates
+10. If a date is missing, omit that role entirely rather than guess
+
 STRICT RULES - LENGTH (CRITICAL):
-6. Resume MUST be 400-600 words to fill exactly 1 page - NOT too short, NOT too long
-7. Include 3-4 most relevant roles with achievement bullets
-8. Each role needs 3-4 bullet points with specific accomplishments and metrics
-9. Skills section: 12-18 relevant skills to demonstrate breadth
+11. Resume MUST be 400-600 words to fill exactly 1 page - NOT too short, NOT too long
+12. Include 3-4 most relevant roles with achievement bullets
+13. Each role needs 3-4 bullet points with specific accomplishments and metrics
+14. Skills section: 12-18 relevant skills to demonstrate breadth
 
 STRICT RULES - BULLET POINT FORMAT (CRITICAL):
-10. EVERY achievement under each job MUST start with "- " (dash followed by space)
-11. Do NOT write experience as plain paragraphs - ALWAYS use bullet points
-12. Each bullet point should be on its own line, starting with "- "
+15. EVERY achievement under each job MUST start with "- " (dash followed by space)
+16. Do NOT write experience as plain paragraphs - ALWAYS use bullet points
+17. Each bullet point should be on its own line, starting with "- "
 
 STRICT RULES - WRITING STYLE (NO FLUFF):
-13. Start EVERY bullet with a strong ACTION VERB (Built, Led, Designed, Implemented, Reduced, etc.)
-14. NO fluff words: avoid "responsible for", "helped with", "worked on", "assisted in", "various", "multiple"
-15. NO filler phrases: avoid "in order to", "was able to", "successfully", "effectively"
-16. Be DIRECT and SPECIFIC - state what you DID and the RESULT
-17. Include metrics/numbers when available (%, $, time saved, users impacted)
-18. Maximum 12-15 words per bullet - be concise
+18. Start EVERY bullet with a strong ACTION VERB (Built, Led, Designed, Implemented, Reduced, etc.)
+19. NO fluff words: avoid "responsible for", "helped with", "worked on", "assisted in", "various", "multiple"
+20. NO filler phrases: avoid "in order to", "was able to", "successfully", "effectively"
+21. Be DIRECT and SPECIFIC - state what you DID and the RESULT
+22. Include metrics/numbers when available (%, $, time saved, users impacted)
+23. Maximum 12-15 words per bullet - be concise
 
 GOOD BULLET EXAMPLES:
 - Built ML pipeline processing 10M daily events, reducing latency 40%
@@ -286,32 +395,45 @@ OUTPUT FORMAT (follow exactly):
 
 [EDUCATION]
 {Degree}, {Institution}, {Year}
+
+[PUBLICATIONS] (include if candidate has publications and relevant to job)
+{Title} - {Venue/Publisher}, {Year}
 """
 
 
-COVER_LETTER_SYSTEM_PROMPT = """You are an expert cover letter writer. Generate a compelling, concise cover letter.
+COVER_LETTER_SYSTEM_PROMPT = """You are an expert cover letter writer. Generate a compelling, concise, grammatically perfect cover letter.
+
+STRICT RULES - GRAMMAR & STYLE (CRITICAL):
+1. Use PERFECT grammar - no errors in subject-verb agreement, tense, or punctuation
+2. Write in FIRST PERSON consistently ("I led", "I developed", not mixing perspectives)
+3. Use ACTIVE VOICE - "I led the team" not "the team was led by me"
+4. Each sentence must be COMPLETE with subject and verb
+5. Use professional, formal tone throughout
+6. PROOFREAD for: run-on sentences, comma splices, sentence fragments
+7. Vary sentence structure - avoid starting every sentence with "I"
 
 STRICT RULES - FACTS:
-1. ONLY use information from the provided profile - NO EXCEPTIONS
-2. Do NOT invent skills, experiences, achievements, or metrics
-3. Do NOT exaggerate or embellish any information
-4. Reference specific experiences from the profile
+8. ONLY use information from the provided profile - NO EXCEPTIONS
+9. Do NOT invent skills, experiences, achievements, or metrics
+10. Do NOT exaggerate or embellish any information
+11. Reference specific experiences from the profile
 
 STRICT RULES - LENGTH (CRITICAL):
-5. Cover letter MUST be 250-350 words maximum (3-4 short paragraphs)
-6. NO fluff phrases like "I am writing to express my interest"
-7. Every sentence must add value - be direct and specific
-8. Focus on 2-3 key qualifications that match the job
+12. Cover letter MUST be 250-350 words maximum (3-4 short paragraphs)
+13. NO fluff phrases like "I am writing to express my interest"
+14. Every sentence must add value - be direct and specific
+15. Focus on 2-3 key qualifications that match the job
 
 STRICT RULES - MOTIVATION:
-9. In the OPENING, express genuine motivation for WHY you're interested in THIS COMPANY
-10. Connect the company's mission, products, or values to your background/interests
-11. Do NOT use generic phrases - be specific about what draws you to the company
+16. In the OPENING, express genuine motivation for WHY you're interested in THIS COMPANY
+17. Connect the company's mission, products, or values to your background/interests
+18. Do NOT use generic phrases - be specific about what draws you to the company
 
-STRICT RULES - CONTACT INFO:
-12. Do NOT include email, phone, or address in the letter body
-13. Contact info will be added as a header separately
-14. Do NOT sign off with contact information
+STRICT RULES - CONTACT INFO & SIGNATURE:
+19. Do NOT include email, phone, or address in the letter body
+20. Contact info will be added as a header separately
+21. Do NOT sign off with contact information
+22. Do NOT put your name at the end - it will be added automatically
 
 OUTPUT FORMAT (follow exactly):
 [DATE]
@@ -321,19 +443,17 @@ OUTPUT FORMAT (follow exactly):
 Hiring Manager
 {Company Name}
 
-[OPENING - 2-3 sentences, ~50 words]
-{Express genuine motivation for this company + your single strongest qualification}
+[OPENING]
+{2-3 sentences, ~50 words: Express genuine motivation for this company + your single strongest qualification}
 
-[BODY PARAGRAPH 1 - 3-4 sentences, ~75 words]
-{Your most relevant experience mapped to top job requirement, with specific metric}
+[BODY PARAGRAPH 1]
+{3-4 sentences, ~75 words: Your most relevant experience mapped to top job requirement, with specific metric}
 
-[BODY PARAGRAPH 2 - 3-4 sentences, ~75 words]
-{Second key strength with specific achievement from profile}
+[BODY PARAGRAPH 2]
+{3-4 sentences, ~75 words: Second key strength with specific achievement from profile}
 
-[CLOSING - 2-3 sentences, ~50 words]
-{Brief enthusiasm, availability, call to action - NO contact info here}
-
-{Your name}
+[CLOSING]
+{2-3 sentences, ~50 words: Brief enthusiasm, availability, call to action - NO name here}
 """
 
 

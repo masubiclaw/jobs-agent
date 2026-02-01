@@ -592,6 +592,7 @@ def _parse_resume_sections(content: str) -> Dict[str, str]:
         "skills": "",
         "experience": "",
         "education": "",
+        "publications": "",
     }
     
     def is_section_header(line: str, *keywords) -> bool:
@@ -644,6 +645,12 @@ def _parse_resume_sections(content: str) -> Dict[str, str]:
                 sections[current_section] = "\n".join(current_content)
             logger.debug(f"  Found EDUCATION section marker")
             current_section = "education"
+            current_content = []
+        elif is_section_header(line, "PUBLICATIONS"):
+            if current_content:
+                sections[current_section] = "\n".join(current_content)
+            logger.debug(f"  Found PUBLICATIONS section marker")
+            current_section = "publications"
             current_content = []
         else:
             if line.strip():
@@ -716,6 +723,33 @@ def _parse_cover_letter_sections(content: str) -> Dict[str, str]:
     
     if current_content:
         sections[current_section] = "\n".join(current_content)
+    
+    # Post-process: Remove name/signature from closing paragraph
+    # The LLM often appends the name at the end - we add it separately
+    if sections.get("closing"):
+        closing_lines = sections["closing"].split("\n")
+        cleaned_closing = []
+        for line in closing_lines:
+            line_stripped = line.strip()
+            # Skip lines that look like a signature (short, name-like, no punctuation at end)
+            # Typical patterns: "Justin Masui", "John Doe", "Sincerely,\nName"
+            if line_stripped:
+                # Skip if it's just 1-3 words and no sentence punctuation
+                words = line_stripped.split()
+                is_signature_line = (
+                    len(words) <= 3 and 
+                    not line_stripped.endswith(('.', '!', '?')) and
+                    not line_stripped.lower().startswith(('i ', 'my ', 'the ', 'thank', 'please'))
+                )
+                # Also skip common closing phrases that should be separate
+                is_closing_phrase = line_stripped.lower().rstrip(',') in [
+                    'sincerely', 'best regards', 'regards', 'best', 'warm regards',
+                    'kind regards', 'respectfully', 'yours truly', 'thank you'
+                ]
+                if not is_signature_line or is_closing_phrase:
+                    cleaned_closing.append(line)
+        
+        sections["closing"] = "\n".join(cleaned_closing)
     
     return sections
 
@@ -867,6 +901,23 @@ def _build_resume_story(sections: Dict[str, str], styles: Dict[str, ParagraphSty
                     degree = _clean_markdown(parts[0])
                     rest = " | ".join([_clean_markdown(p) for p in parts[1:]])
                     story.append(Paragraph(f"<b>{degree}</b>  |  {rest}", styles["Education"]))
+                else:
+                    story.append(Paragraph(line, styles["Education"]))
+    
+    # =========================
+    # PUBLICATIONS
+    # =========================
+    if sections.get("publications"):
+        story.extend(_create_section_header("Publications", styles))
+        for line in sections["publications"].split("\n"):
+            line = _clean_markdown(line)
+            if line:
+                # Format: "Title" - Venue, Year or just Title - Venue (Year)
+                if " - " in line:
+                    parts = line.split(" - ", 1)
+                    title = _clean_markdown(parts[0])
+                    venue = _clean_markdown(parts[1]) if len(parts) > 1 else ""
+                    story.append(Paragraph(f"<b>{title}</b> - {venue}", styles["Education"]))
                 else:
                     story.append(Paragraph(line, styles["Education"]))
     

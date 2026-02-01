@@ -103,6 +103,45 @@ def _check_for_markdown(content: str) -> Tuple[bool, List[str]]:
     return bool(found), found
 
 
+# Problematic Unicode characters that should have been sanitized
+PROBLEMATIC_CHARACTERS = {
+    '\u2018': "left single quote '",
+    '\u2019': "right single quote '", 
+    '\u201C': 'left double quote "',
+    '\u201D': 'right double quote "',
+    '\u2013': 'en-dash –',
+    '\u2014': 'em-dash —',
+    '\u2026': 'ellipsis …',
+    '\u00A0': 'non-breaking space',
+    '\u2022': 'bullet •',
+}
+
+
+def _check_for_bad_characters(content: str) -> Tuple[bool, List[str]]:
+    """
+    Check if content contains problematic Unicode characters.
+    
+    These characters can cause display issues in PDFs and should be
+    replaced with ASCII equivalents.
+    
+    Args:
+        content: Content to check
+    
+    Returns:
+        Tuple of (has_bad_chars, list of found character descriptions)
+    """
+    if not content:
+        return False, []
+    
+    found = []
+    for char, description in PROBLEMATIC_CHARACTERS.items():
+        if char in content:
+            count = content.count(char)
+            found.append(f"{description} (×{count})")
+    
+    return bool(found), found
+
+
 def _check_paragraph_structure(content: str, doc_type: str) -> Tuple[bool, str]:
     """
     Check if document has proper paragraph structure.
@@ -166,6 +205,10 @@ class CritiqueResult:
     grammar_score: int = 100
     grammar_errors: Optional[List[Dict[str, str]]] = None
     grammar_feedback: str = ""
+    dates_valid: bool = True
+    invalid_dates: Optional[List[str]] = None
+    has_bad_chars: bool = False
+    found_bad_chars: Optional[List[str]] = None
     
     def __post_init__(self):
         if self.found_artifacts is None:
@@ -174,6 +217,10 @@ class CritiqueResult:
             self.found_markdown = []
         if self.grammar_errors is None:
             self.grammar_errors = []
+        if self.invalid_dates is None:
+            self.invalid_dates = []
+        if self.found_bad_chars is None:
+            self.found_bad_chars = []
 
 
 def _call_ollama(prompt: str, temperature: float = 0.1) -> str:
@@ -263,6 +310,128 @@ def _check_length_compliance(content: str, doc_type: str) -> Tuple[bool, str]:
         return True, f"Cover letter length OK: {word_count} words"
     
     return True, "Unknown document type"
+
+
+# Month name mapping for date conversion
+MONTH_NAMES = {
+    "01": "Jan", "02": "Feb", "03": "Mar", "04": "Apr",
+    "05": "May", "06": "Jun", "07": "Jul", "08": "Aug",
+    "09": "Sep", "10": "Oct", "11": "Nov", "12": "Dec"
+}
+
+
+def _normalize_date(date_str: str) -> List[str]:
+    """
+    Convert profile date format to acceptable display formats.
+    
+    Args:
+        date_str: Date like "2025-08", "present", "2023-10"
+    
+    Returns:
+        List of acceptable formats: ["Aug 2025", "August 2025", "2025-08", "08/2025"]
+    """
+    if not date_str:
+        return []
+    
+    date_lower = date_str.lower().strip()
+    
+    if date_lower == "present":
+        return ["present", "Present", "current", "Current"]
+    
+    # Handle YYYY-MM format
+    match = re.match(r'^(\d{4})-(\d{2})$', date_str)
+    if match:
+        year, month = match.groups()
+        month_name = MONTH_NAMES.get(month, "")
+        month_full = {
+            "01": "January", "02": "February", "03": "March", "04": "April",
+            "05": "May", "06": "June", "07": "July", "08": "August",
+            "09": "September", "10": "October", "11": "November", "12": "December"
+        }.get(month, "")
+        
+        return [
+            f"{month_name} {year}",      # Aug 2025
+            f"{month_full} {year}",       # August 2025
+            f"{date_str}",                # 2025-08
+            f"{month}/{year}",            # 08/2025
+            f"{int(month)}/{year}",       # 8/2025
+            year,                         # Just year is acceptable
+        ]
+    
+    # Handle just year
+    if re.match(r'^\d{4}$', date_str):
+        return [date_str]
+    
+    return [date_str]
+
+
+def _validate_dates(content: str, profile: Dict[str, Any]) -> Tuple[bool, List[str], List[str]]:
+    """
+    Validate that dates in the generated content match profile dates.
+    
+    Returns:
+        Tuple of (all_valid, valid_dates, invalid_dates)
+    """
+    invalid_dates = []
+    valid_dates = []
+    
+    # Build set of acceptable dates from profile
+    acceptable_dates = set()
+    profile_date_map = {}  # Map normalized -> original for feedback
+    
+    for exp in profile.get("experience", []):
+        start = exp.get("start_date", "")
+        end = exp.get("end_date", "")
+        
+        for date_str in [start, end]:
+            if date_str:
+                normalized = _normalize_date(date_str)
+                for fmt in normalized:
+                    acceptable_dates.add(fmt.lower())
+                    profile_date_map[fmt.lower()] = date_str
+    
+    # Extract dates from content using common patterns
+    # Match: "Aug 2025", "August 2025", "2025-08", "08/2025", "2025"
+    date_patterns = [
+        r'\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{4})\b',
+        r'\b(\d{1,2})/(\d{4})\b',
+        r'\b(\d{4})-(\d{2})\b',
+    ]
+    
+    found_dates = []
+    
+    # Find month-year dates
+    for match in re.finditer(date_patterns[0], content, re.IGNORECASE):
+        found_dates.append(match.group(0))
+    
+    # Find MM/YYYY dates
+    for match in re.finditer(date_patterns[1], content):
+        found_dates.append(match.group(0))
+    
+    # Find YYYY-MM dates
+    for match in re.finditer(date_patterns[2], content):
+        found_dates.append(match.group(0))
+    
+    # Check "Present" separately
+    if re.search(r'\bpresent\b', content, re.IGNORECASE):
+        found_dates.append("Present")
+    
+    # Validate each found date
+    for date in found_dates:
+        date_lower = date.lower()
+        if date_lower in acceptable_dates or any(date_lower in ad for ad in acceptable_dates):
+            valid_dates.append(date)
+        else:
+            # Check if it's a valid year from profile
+            year_match = re.search(r'\d{4}', date)
+            if year_match:
+                year = year_match.group()
+                if any(year in ad for ad in acceptable_dates):
+                    valid_dates.append(date)
+                    continue
+            invalid_dates.append(date)
+    
+    return len(invalid_dates) == 0, valid_dates, invalid_dates
 
 
 def _extract_keywords_from_job(job: Dict[str, Any]) -> List[str]:
@@ -431,7 +600,12 @@ def critique_document(
     if has_markdown:
         logger.warning(f"Markdown formatting found in {doc_type}: {found_markdown[:3]}")
     
-    # 0c. Check paragraph structure (for cover letters)
+    # 0c. Check for problematic Unicode characters
+    has_bad_chars, found_bad_chars = _check_for_bad_characters(content)
+    if has_bad_chars:
+        logger.warning(f"Problematic characters found in {doc_type}: {found_bad_chars[:3]}")
+    
+    # 0d. Check paragraph structure (for cover letters)
     structure_valid, structure_feedback = _check_paragraph_structure(content, doc_type)
     if not structure_valid:
         logger.warning(f"Structure issue in {doc_type}: {structure_feedback}")
@@ -515,6 +689,14 @@ Job titles held: {', '.join(set(profile_facts['titles']))}
     if grammar_errors:
         logger.warning(f"Grammar issues found ({len(grammar_errors)}): {grammar_feedback}")
     
+    # 5b. Date validation (for resumes)
+    dates_valid = True
+    invalid_dates = []
+    if doc_type == "resume":
+        dates_valid, valid_dates, invalid_dates = _validate_dates(content, profile)
+        if invalid_dates:
+            logger.warning(f"Invalid dates found: {invalid_dates}")
+    
     # 6. Calculate overall score
     fact_score = fact_data.get("fact_score", 50)
     ats_score = ats_data.get("ats_score", 70)
@@ -533,6 +715,8 @@ Job titles held: {', '.join(set(profile_facts['titles']))}
         suggestions.insert(0, f"CRITICAL: Remove template artifacts: {', '.join(found_artifacts[:3])}")
     if has_markdown:
         suggestions.insert(0, f"CRITICAL: Remove markdown formatting: {', '.join(found_markdown[:3])}. Use plain text only.")
+    if has_bad_chars:
+        suggestions.insert(0, f"CHARACTERS: Replace special characters with ASCII: {', '.join(found_bad_chars[:3])}. Use straight quotes, regular dashes.")
     if not structure_valid:
         suggestions.insert(0, f"STRUCTURE: {structure_feedback}")
     if grammar_score < 90:
@@ -549,8 +733,10 @@ Job titles held: {', '.join(set(profile_facts['titles']))}
         suggestions.append(f"Add missing keywords: {', '.join(missing_kw[:5])}")
     if not length_ok:
         suggestions.insert(0, length_feedback)
+    if invalid_dates:
+        suggestions.insert(0, f"DATES (CRITICAL): Fix incorrect dates: {', '.join(invalid_dates)}. Use EXACT dates from profile (e.g., 'Aug 2025' for '2025-08').")
     
-    # 8. Determine pass/fail (artifacts, markdown, and grammar issues cause failure)
+    # 8. Determine pass/fail (artifacts, markdown, dates, characters, and grammar issues cause failure)
     # Grammar must be >= 90 (near-perfect) for professional quality
     grammar_acceptable = grammar_score >= 90
     passed = (
@@ -560,8 +746,10 @@ Job titles held: {', '.join(set(profile_facts['titles']))}
         not fact_data.get("fabricated_facts") and
         not has_artifacts and
         not has_markdown and
+        not has_bad_chars and
         structure_valid and
-        grammar_acceptable
+        grammar_acceptable and
+        dates_valid
     )
     
     return CritiqueResult(
@@ -585,6 +773,10 @@ Job titles held: {', '.join(set(profile_facts['titles']))}
         grammar_score=grammar_score,
         grammar_errors=grammar_errors,
         grammar_feedback=grammar_feedback,
+        dates_valid=dates_valid,
+        invalid_dates=invalid_dates,
+        has_bad_chars=has_bad_chars,
+        found_bad_chars=found_bad_chars,
     )
 
 
@@ -598,11 +790,18 @@ def format_critique_feedback(critique: CritiqueResult) -> str:
     if critique.has_markdown:
         feedback_parts.append(f"CRITICAL: Remove markdown formatting like {', '.join(critique.found_markdown[:3])}. Use plain text only, no **bold** or *italic* markers.")
     
+    if critique.has_bad_chars:
+        feedback_parts.append(f"CHARACTERS: Replace special Unicode characters with ASCII equivalents. Found: {', '.join(critique.found_bad_chars[:3])}. Use straight quotes (' and \"), regular dashes (-), and standard periods (...).")
+    
     if not critique.structure_valid:
         feedback_parts.append(f"STRUCTURE: {critique.structure_feedback}")
     
     if critique.fabricated_facts:
         feedback_parts.append(f"CRITICAL: Remove fabricated facts: {', '.join(critique.fabricated_facts)}")
+    
+    # Date feedback (CRITICAL for resumes)
+    if not critique.dates_valid and critique.invalid_dates:
+        feedback_parts.append(f"DATES (CRITICAL): These dates are WRONG and not in profile: {', '.join(critique.invalid_dates)}. Use ONLY exact dates from profile, formatted as 'Mon YYYY' (e.g., 'Aug 2025' for profile date '2025-08').")
     
     # Grammar feedback with specific corrections (CRITICAL - must be >= 90 to pass)
     if critique.grammar_score < 90:
