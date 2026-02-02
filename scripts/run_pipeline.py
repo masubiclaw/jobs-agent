@@ -622,47 +622,131 @@ Examples:
     if exclusions:
         print(f"🚫 Exclusions: {', '.join(exclusions[:5])}{'...' if len(exclusions) > 5 else ''}")
     
+    # Track stats for final summary
+    pipeline_stats = {
+        "search": None,
+        "clean": None,
+        "fetch": None,
+        "match": None,
+        "generate": None,
+    }
+    
     # Step 1: Search or Scrape
     if not args.match_only:
         if args.scrape:
             result = run_scrape(args, exclusions)
+            pipeline_stats["search"] = {
+                "type": "scrape",
+                "jobs_found": result.get("jobs_found", 0),
+                "jobs_cached": result.get("jobs_cached", 0),
+                "skipped": result.get("skipped", False),
+            }
         else:
             result = run_search(args, exclusions)
+            pipeline_stats["search"] = {
+                "type": "search",
+                "jobs_found": len(result.get("jobs", [])) if result.get("success") else 0,
+            }
         
         if not result.get("success"):
             print("\n❌ Pipeline stopped due to search/scrape failure")
             sys.exit(1)
+    else:
+        pipeline_stats["search"] = {"type": "skipped"}
     
     # Step 2: Clean dead jobs (optional)
     if args.clean:
-        run_clean_jobs(cache, args)
+        clean_result = run_clean_jobs(cache, args)
+        pipeline_stats["clean"] = {
+            "removed": clean_result.get("removed", 0),
+            "would_remove": clean_result.get("would_remove", 0),
+        }
     
     # Step 3: Fetch descriptions (optional)
     if args.fetch:
         run_fetch_descriptions(cache, limit=args.limit or 100)
+        pipeline_stats["fetch"] = {"enabled": True}
     
     # Step 4: Matching
     results, match_elapsed = run_matching(args, cache)
+    pipeline_stats["match"] = {
+        "strong": len(results["strong"]),
+        "good": len(results["good"]),
+        "partial": len(results["partial"]),
+        "weak": len(results["weak"]),
+        "excluded": len(results["excluded"]),
+        "elapsed": match_elapsed,
+    }
     
     # Show results
     show_results(results, match_elapsed, args)
     
     # Step 5: Generate documents (default on, skip with --no-generate)
     if not args.no_generate:
-        run_document_generation(cache, args, min_score=args.min_score)
+        gen_result = run_document_generation(cache, args, min_score=args.min_score)
+        pipeline_stats["generate"] = {
+            "total": gen_result.get("total", 0),
+            "success": gen_result.get("success", 0),
+            "failed": gen_result.get("failed", 0),
+            "skipped": gen_result.get("skipped", 0),
+        }
     
     # Final summary
     final_count = len(cache.list_all(limit=10000))
     total_elapsed = time.time() - total_start
     
+    print()
     print("=" * 70)
-    print(f"PIPELINE COMPLETE ({total_elapsed:.1f}s)")
+    print("PIPELINE SUMMARY")
     print("=" * 70)
-    print(f"📦 Cache: {final_count} jobs (+{final_count - initial_count} new)")
+    
+    # Search/Scrape summary
+    search_stats = pipeline_stats.get("search", {})
+    if search_stats.get("type") == "skipped":
+        print("1. Search/Scrape: skipped (--match-only)")
+    elif search_stats.get("type") == "scrape":
+        if search_stats.get("skipped"):
+            print("1. Scrape: skipped (already scraped today)")
+        else:
+            print(f"1. Scrape: {search_stats.get('jobs_found', 0)} found, {search_stats.get('jobs_cached', 0)} cached")
+    else:
+        print(f"1. Search: {search_stats.get('jobs_found', 0)} jobs found")
+    
+    # Clean summary
+    clean_stats = pipeline_stats.get("clean")
+    if clean_stats:
+        if args.dry_run:
+            print(f"2. Clean: would remove {clean_stats.get('would_remove', 0)} jobs (dry run)")
+        else:
+            print(f"2. Clean: {clean_stats.get('removed', 0)} jobs removed")
+    else:
+        print("2. Clean: skipped")
+    
+    # Fetch summary
+    if pipeline_stats.get("fetch"):
+        print("3. Fetch: descriptions fetched")
+    else:
+        print("3. Fetch: skipped")
+    
+    # Match summary
+    match_stats = pipeline_stats.get("match", {})
+    strong_good = match_stats.get("strong", 0) + match_stats.get("good", 0)
+    print(f"4. Match: {strong_good} good matches ({match_stats.get('strong', 0)} strong, {match_stats.get('good', 0)} good)")
+    
+    # Generate summary
+    gen_stats = pipeline_stats.get("generate")
+    if gen_stats:
+        print(f"5. Generate: {gen_stats.get('success', 0)} success, {gen_stats.get('failed', 0)} failed, {gen_stats.get('skipped', 0)} skipped")
+    else:
+        print("5. Generate: skipped (--no-generate)")
+    
+    print()
+    print(f"Total time: {total_elapsed:.1f}s")
+    print(f"Cache: {final_count} jobs ({final_count - initial_count:+d} change)")
+    print("=" * 70)
     
     # Suggest next steps (only if generation was skipped)
     if args.no_generate:
-        strong_good = len(results["strong"]) + len(results["good"])
         if strong_good > 0:
             print()
             print("💡 Next steps:")
