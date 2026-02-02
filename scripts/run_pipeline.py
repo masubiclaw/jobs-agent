@@ -639,7 +639,10 @@ Examples:
                 "type": "scrape",
                 "jobs_found": result.get("jobs_found", 0),
                 "jobs_cached": result.get("jobs_cached", 0),
-                "skipped": result.get("skipped", False),
+                "sources_scraped": result.get("sources_scraped", 0),
+                "sources_failed": result.get("sources_failed", 0),
+                "skipped_same_day": result.get("skipped", False),
+                "source": result.get("source", ""),
             }
         else:
             result = run_search(args, exclusions)
@@ -705,10 +708,20 @@ Examples:
     if search_stats.get("type") == "skipped":
         print("1. Search/Scrape: skipped (--match-only)")
     elif search_stats.get("type") == "scrape":
-        if search_stats.get("skipped"):
-            print("1. Scrape: skipped (already scraped today)")
+        if search_stats.get("skipped_same_day"):
+            source = search_stats.get("source", "source")
+            print(f"1. Scrape: {source} skipped (already scraped today)")
         else:
-            print(f"1. Scrape: {search_stats.get('jobs_found', 0)} found, {search_stats.get('jobs_cached', 0)} cached")
+            sources_scraped = search_stats.get("sources_scraped", 0)
+            sources_failed = search_stats.get("sources_failed", 0)
+            jobs_found = search_stats.get("jobs_found", 0)
+            jobs_cached = search_stats.get("jobs_cached", 0)
+            if sources_scraped > 0:
+                print(f"1. Scrape: {sources_scraped} sources scraped, {jobs_found} jobs found, {jobs_cached} cached")
+                if sources_failed > 0:
+                    print(f"          ({sources_failed} sources failed)")
+            else:
+                print(f"1. Scrape: {jobs_found} jobs found, {jobs_cached} cached")
     else:
         print(f"1. Search: {search_stats.get('jobs_found', 0)} jobs found")
     
