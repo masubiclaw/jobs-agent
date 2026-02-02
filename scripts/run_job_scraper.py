@@ -99,6 +99,7 @@ Examples:
     parser.add_argument("--resume", action="store_true", help="Resume from last checkpoint")
     parser.add_argument("--status", action="store_true", help="Show checkpoint status")
     parser.add_argument("--clear", action="store_true", help="Clear checkpoint and start fresh")
+    parser.add_argument("--force", "-f", action="store_true", help="Force scrape even if already scraped today")
     parser.add_argument("--verbose", "-v", action="store_true", help="Show progress for each source")
     parser.add_argument("--exclude", type=str, help="Companies to exclude (comma-separated), overrides profile")
     parser.add_argument("--no-exclude", action="store_true", help="Disable exclusion filtering")
@@ -192,10 +193,13 @@ Examples:
         
         # Scrape single source (no checkpointing for single source)
         print(f"🕷️  Scraping source: {args.source}")
+        if args.force:
+            print("   (force mode: ignoring same-day cache)")
         print("-" * 70)
         result = scrape_single_source(
             source_name=args.source,
             cache_results=True,
+            force=args.force,
         )
     elif args.category or args.all or args.max_sources:
         # Scrape multiple sources with checkpointing
@@ -219,6 +223,7 @@ Examples:
             delay_seconds=args.delay,
             follow_pagination=not args.no_pagination,
             resume=args.resume,
+            skip_same_day=not args.force,
             on_progress=on_progress if args.verbose else None,
         )
 

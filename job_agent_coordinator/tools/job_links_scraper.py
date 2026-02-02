@@ -56,6 +56,53 @@ except ImportError:
 CHECKPOINT_DIR = Path(__file__).parent.parent.parent / ".job_cache"
 
 
+class ScrapeHistory:
+    """Tracks when sources were last scraped to avoid same-day duplicates."""
+    
+    def __init__(self, history_file: Path = None):
+        self.history_file = history_file or CHECKPOINT_DIR / "scrape_history.json"
+        self.history_file.parent.mkdir(parents=True, exist_ok=True)
+        self._history = self._load()
+    
+    def _load(self) -> Dict[str, str]:
+        if self.history_file.exists():
+            try:
+                return json.loads(self.history_file.read_text())
+            except:
+                pass
+        return {}
+    
+    def _save(self):
+        self.history_file.write_text(json.dumps(self._history, indent=2))
+    
+    def was_scraped_today(self, source_name: str) -> bool:
+        """Check if a source was already scraped today."""
+        last_scraped = self._history.get(source_name)
+        if not last_scraped:
+            return False
+        
+        try:
+            last_date = datetime.fromisoformat(last_scraped).date()
+            return last_date == datetime.now().date()
+        except:
+            return False
+    
+    def mark_scraped(self, source_name: str):
+        """Mark a source as scraped now."""
+        self._history[source_name] = datetime.now().isoformat()
+        self._save()
+    
+    def get_last_scraped(self, source_name: str) -> Optional[str]:
+        """Get the last scraped timestamp for a source."""
+        return self._history.get(source_name)
+    
+    def clear(self):
+        """Clear all history."""
+        self._history = {}
+        if self.history_file.exists():
+            self.history_file.unlink()
+
+
 class ScrapingProgress:
     """Manages checkpoint/resume for batch scraping jobs."""
     
@@ -886,6 +933,7 @@ def scrape_job_links(
     max_pages_per_source: int = 3,  # Max pages to scrape per source
     delay_seconds: float = SCRAPE_DELAY,
     resume: bool = False,  # Resume from checkpoint
+    skip_same_day: bool = True,  # Skip sources scraped today
     on_progress: callable = None,  # Progress callback(completed, total, source_result)
 ) -> Dict[str, Any]:
     """
@@ -919,6 +967,7 @@ def scrape_job_links(
     """
     start_time = time.time()
     progress = ScrapingProgress()
+    history = ScrapeHistory()
     
     all_links = parse_markdown_links(file_path)
     if not all_links:
@@ -935,6 +984,7 @@ def scrape_job_links(
     
     # Handle resume
     skipped_count = 0
+    same_day_skipped = 0
     if resume:
         completed_sources = progress.get_completed_sources()
         skipped_count = sum(1 for link in all_links if link["name"] in completed_sources)
@@ -943,6 +993,12 @@ def scrape_job_links(
     else:
         # Start fresh
         progress.clear()
+    
+    # Count same-day skips
+    if skip_same_day:
+        same_day_skipped = sum(1 for link in all_links if history.was_scraped_today(link["name"]))
+        if same_day_skipped > 0:
+            logger.info(f"📅 Skipping {same_day_skipped} sources already scraped today")
     
     # Initialize progress tracking
     progress.start(len(all_links), categories)
@@ -975,6 +1031,12 @@ def scrape_job_links(
                 total_added += prev.get("jobs_cached", 0)
             else:
                 failed_sources.append({"name": link["name"], "reason": prev.get("error", "Previous failure"), "resumed": True})
+            completed += 1
+            continue
+        
+        # Check if already scraped today
+        if skip_same_day and history.was_scraped_today(link["name"]):
+            logger.info(f"\n[{i+1}/{len(all_links)}] ⏭️  {link['name']} - already scraped today, skipping")
             completed += 1
             continue
         
@@ -1029,6 +1091,11 @@ def scrape_job_links(
             success=source_success,
             error=source_error
         )
+        
+        # Mark as scraped today (for same-day skip logic)
+        if source_success:
+            history.mark_scraped(link["name"])
+        
         completed += 1
         
         # Progress callback
@@ -1207,7 +1274,8 @@ def scrape_single_source(
     source_name: str,
     file_path: str = None,
     cache_results: bool = True,
-    use_llm_dedup: bool = False
+    use_llm_dedup: bool = False,
+    force: bool = False,  # Force scrape even if already scraped today
 ) -> Dict[str, Any]:
     """
     Scrape jobs from a single source by name.
@@ -1215,16 +1283,21 @@ def scrape_single_source(
     ⚠️ NOTE: Takes 10-60 seconds per source (web scraping + LLM extraction).
     Use get_links_summary first to see available source names.
     
+    By default, skips sources that were already scraped today.
+    Use force=True to scrape anyway.
+    
     Args:
         source_name: Name of source to scrape (e.g., "Boeing", "Anthropic")
         file_path: Path to markdown file with job links
         cache_results: Whether to cache extracted jobs
         use_llm_dedup: Use LLM for duplicate detection (slower)
+        force: Force scrape even if already scraped today
     
     Returns:
         Dict with jobs found and caching results
     """
     links = parse_markdown_links(file_path)
+    history = ScrapeHistory()
     
     source_lower = source_name.lower()
     matching = [l for l in links if source_lower in l["name"].lower()]
@@ -1237,6 +1310,21 @@ def scrape_single_source(
         }
     
     link = matching[0]
+    
+    # Check if already scraped today
+    if not force and history.was_scraped_today(link["name"]):
+        last_scraped = history.get_last_scraped(link["name"])
+        logger.info(f"⏭️  {link['name']} already scraped today at {last_scraped}, skipping (use force=True to override)")
+        return {
+            "success": True,
+            "source": link["name"],
+            "skipped": True,
+            "reason": "already_scraped_today",
+            "last_scraped": last_scraped,
+            "jobs_found": 0,
+            "jobs_cached": 0,
+        }
+    
     logger.info(f"📡 Scraping: {link['name']} ({link['category']})")
     
     scraped = scrape_webpage(link["url"])
@@ -1252,6 +1340,9 @@ def scrape_single_source(
         added = result["added"]
         duplicates = result["duplicates"]
         logger.info(f"💾 Cached: {added} new, {duplicates} duplicates")
+    
+    # Mark as scraped today
+    history.mark_scraped(link["name"])
     
     return {
         "success": True,
