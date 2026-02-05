@@ -29,7 +29,7 @@
 - [Valve](https://www.valvesoftware.com/jobs)
 - [Bungie](https://careers.bungie.com/jobs)
 - [Wizards of the Coast](https://company.wizards.com/en/careers)
-- [Nintendo of America](https://careers.nintendo.com/job-openings/)
+- [Nintendo of America](https://careers.nintendo.com/jobs/)
 
 ## Seattle Area - Retail & Consumer
 - [REI](https://www.rei.jobs/jobs)
