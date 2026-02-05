@@ -1,0 +1,365 @@
+"""Job service wrapping the existing JobCache with multi-user support."""
+
+import logging
+import hashlib
+from datetime import datetime
+from pathlib import Path
+from typing import Optional, List, Dict, Any
+
+from api.models import (
+    JobCreate, JobResponse, JobListResponse, JobStatus, JobAddMethod, MatchResult
+)
+
+# Import existing tools
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from job_agent_coordinator.tools.job_cache import get_cache, JobCache
+from job_agent_coordinator.tools.toon_format import to_toon, from_toon
+
+logger = logging.getLogger(__name__)
+
+
+class JobService:
+    """
+    Multi-user job service.
+    
+    Jobs are shared globally (scraped jobs), but user-specific metadata
+    (status, notes) is stored per-user.
+    """
+    
+    def __init__(self, base_dir: Path = None):
+        self.base_dir = Path(base_dir) if base_dir else Path(".job_cache/users")
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+        self._cache = get_cache()
+    
+    def _user_jobs_file(self, user_id: str) -> Path:
+        """Get user-specific job metadata file."""
+        user_dir = self.base_dir / user_id
+        user_dir.mkdir(parents=True, exist_ok=True)
+        return user_dir / "job_metadata.toon"
+    
+    def _load_user_job_metadata(self, user_id: str) -> Dict[str, Dict[str, Any]]:
+        """Load user-specific job metadata."""
+        meta_file = self._user_jobs_file(user_id)
+        if meta_file.exists():
+            try:
+                data = from_toon(meta_file.read_text())
+                return data.get("jobs", {}) if isinstance(data, dict) else {}
+            except:
+                pass
+        return {}
+    
+    def _save_user_job_metadata(self, user_id: str, metadata: Dict[str, Dict[str, Any]]):
+        """Save user-specific job metadata."""
+        meta_file = self._user_jobs_file(user_id)
+        data = {
+            "jobs": metadata,
+            "updated_at": datetime.now().isoformat()
+        }
+        meta_file.write_text(to_toon(data) + '\n')
+    
+    def _get_user_job_meta(self, user_id: str, job_id: str) -> Dict[str, Any]:
+        """Get user-specific metadata for a job."""
+        all_meta = self._load_user_job_metadata(user_id)
+        return all_meta.get(job_id, {
+            "status": JobStatus.ACTIVE.value,
+            "notes": "",
+            "added_by": JobAddMethod.SCRAPED.value
+        })
+    
+    def _set_user_job_meta(self, user_id: str, job_id: str, **kwargs):
+        """Set user-specific metadata for a job."""
+        all_meta = self._load_user_job_metadata(user_id)
+        if job_id not in all_meta:
+            all_meta[job_id] = {
+                "status": JobStatus.ACTIVE.value,
+                "notes": "",
+                "added_by": JobAddMethod.SCRAPED.value
+            }
+        
+        for key, value in kwargs.items():
+            if value is not None:
+                if hasattr(value, 'value'):
+                    all_meta[job_id][key] = value.value
+                else:
+                    all_meta[job_id][key] = value
+        
+        self._save_user_job_metadata(user_id, all_meta)
+    
+    def _job_to_response(self, job: Dict[str, Any], user_meta: Dict[str, Any] = None, match: Dict[str, Any] = None) -> JobResponse:
+        """Convert job dict to response model."""
+        user_meta = user_meta or {}
+        
+        match_result = None
+        if match:
+            match_result = MatchResult(
+                keyword_score=match.get("keyword_score", 0),
+                llm_score=match.get("llm_score"),
+                combined_score=match.get("combined_score", match.get("match_score", 0)),
+                match_level=match.get("match_level", "unknown"),
+                toon_report=match.get("toon_report", ""),
+                cached_at=datetime.fromisoformat(match["cached_at"]) if match.get("cached_at") else None
+            )
+        
+        return JobResponse(
+            id=job.get("id", ""),
+            title=job.get("title", "Unknown"),
+            company=job.get("company", "Unknown"),
+            location=job.get("location", "Unknown"),
+            salary=job.get("salary", "Not specified"),
+            url=job.get("url", ""),
+            description=job.get("description", ""),
+            platform=job.get("platform", "unknown"),
+            posted_date=job.get("posted_date", ""),
+            cached_at=datetime.fromisoformat(job.get("cached_at", datetime.now().isoformat())),
+            status=JobStatus(user_meta.get("status", JobStatus.ACTIVE.value)),
+            added_by=JobAddMethod(user_meta.get("added_by", JobAddMethod.SCRAPED.value)),
+            notes=user_meta.get("notes", ""),
+            match=match_result
+        )
+    
+    def list_jobs(
+        self,
+        user_id: str,
+        page: int = 1,
+        page_size: int = 20,
+        status: Optional[JobStatus] = None,
+        company: Optional[str] = None,
+        location: Optional[str] = None,
+        query: Optional[str] = None,
+        semantic: bool = False
+    ) -> JobListResponse:
+        """List jobs with filters and pagination."""
+        # Get all jobs from cache
+        if semantic and query:
+            all_jobs = self._cache.semantic_search(query, limit=500)
+        elif query or company or location:
+            all_jobs = self._cache.search(
+                query=query or "",
+                company=company or "",
+                location=location or "",
+                limit=500
+            )
+        else:
+            all_jobs = self._cache.list_all(limit=500)
+        
+        # Load user metadata
+        user_meta = self._load_user_job_metadata(user_id)
+        
+        # Apply status filter
+        filtered_jobs = []
+        for job in all_jobs:
+            job_id = job.get("id", "")
+            meta = user_meta.get(job_id, {"status": JobStatus.ACTIVE.value})
+            
+            if status and meta.get("status") != status.value:
+                continue
+            
+            filtered_jobs.append((job, meta))
+        
+        # Pagination
+        total = len(filtered_jobs)
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        page_jobs = filtered_jobs[start_idx:end_idx]
+        
+        # Convert to response
+        jobs = []
+        for job, meta in page_jobs:
+            job_id = job.get("id", "")
+            # Get match if available
+            match = self._cache.get_match(job_id)
+            jobs.append(self._job_to_response(job, meta, match))
+        
+        return JobListResponse(
+            jobs=jobs,
+            total=total,
+            page=page,
+            page_size=page_size,
+            has_more=end_idx < total
+        )
+    
+    def get_top_matches(
+        self,
+        user_id: str,
+        limit: int = 10,
+        min_score: int = 0
+    ) -> List[JobResponse]:
+        """Get top matched jobs."""
+        matches = self._cache.list_matches(min_score=min_score, limit=limit)
+        user_meta = self._load_user_job_metadata(user_id)
+        
+        jobs = []
+        for match in matches:
+            job_id = match.get("job_id", "")
+            job = self._cache.get(job_id)
+            if job:
+                meta = user_meta.get(job_id, {"status": JobStatus.ACTIVE.value})
+                jobs.append(self._job_to_response(job, meta, match))
+        
+        return jobs
+    
+    def create_job(self, user_id: str, job_data: JobCreate) -> Optional[JobResponse]:
+        """Create a new job from various input methods."""
+        job = None
+        added_by = JobAddMethod.MANUAL
+        
+        # Method 1: From URL
+        if job_data.job_url:
+            try:
+                from job_agent_coordinator.tools.url_job_fetcher import fetch_job_from_url
+                result = fetch_job_from_url(job_data.job_url)
+                if result and isinstance(result, dict):
+                    job = result
+                    added_by = JobAddMethod.URL
+            except Exception as e:
+                logger.error(f"Failed to fetch job from URL: {e}")
+        
+        # Method 2: From plaintext (parse with LLM)
+        elif job_data.plaintext:
+            job = self._parse_plaintext_job(job_data.plaintext)
+            added_by = JobAddMethod.MANUAL
+        
+        # Method 3: Direct fields
+        elif job_data.title and job_data.company:
+            job = {
+                "title": job_data.title,
+                "company": job_data.company,
+                "location": job_data.location or "Unknown",
+                "description": job_data.description or "",
+                "url": job_data.url or "",
+                "salary": job_data.salary or "Not specified",
+            }
+            added_by = JobAddMethod.MANUAL
+        
+        if not job:
+            return None
+        
+        # Add to cache
+        self._cache.add(job)
+        self._cache._save_jobs()
+        
+        job_id = self._cache._generate_id(job)
+        
+        # Set user metadata
+        self._set_user_job_meta(user_id, job_id, added_by=added_by, status=JobStatus.ACTIVE)
+        
+        return self._job_to_response(
+            self._cache.get(job_id),
+            self._get_user_job_meta(user_id, job_id)
+        )
+    
+    def _parse_plaintext_job(self, text: str) -> Optional[Dict[str, Any]]:
+        """Parse job description from plaintext using LLM."""
+        try:
+            import ollama
+            
+            prompt = f"""Extract job details from this text. Return ONLY a JSON object with these fields:
+- title: Job title
+- company: Company name  
+- location: Job location
+- salary: Salary if mentioned, otherwise "Not specified"
+- description: Brief description (max 500 chars)
+
+Text:
+{text[:3000]}
+
+JSON:"""
+            
+            response = ollama.chat(
+                model="gemma3:12b",
+                messages=[{"role": "user", "content": prompt}],
+                options={"temperature": 0.1}
+            )
+            
+            import json
+            content = response["message"]["content"]
+            # Extract JSON from response
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0]
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0]
+            
+            return json.loads(content.strip())
+        except Exception as e:
+            logger.error(f"Failed to parse plaintext job: {e}")
+            return None
+    
+    def create_job_from_pdf(self, user_id: str, pdf_content: bytes, filename: str) -> Optional[JobResponse]:
+        """Create job from PDF upload."""
+        try:
+            import fitz  # PyMuPDF
+            
+            # Extract text from PDF
+            doc = fitz.open(stream=pdf_content, filetype="pdf")
+            text = ""
+            for page in doc:
+                text += page.get_text()
+            doc.close()
+            
+            if not text.strip():
+                return None
+            
+            # Parse with LLM
+            job = self._parse_plaintext_job(text)
+            if not job:
+                return None
+            
+            # Add to cache
+            self._cache.add(job)
+            self._cache._save_jobs()
+            
+            job_id = self._cache._generate_id(job)
+            
+            # Set user metadata
+            self._set_user_job_meta(user_id, job_id, added_by=JobAddMethod.PDF, status=JobStatus.ACTIVE)
+            
+            return self._job_to_response(
+                self._cache.get(job_id),
+                self._get_user_job_meta(user_id, job_id)
+            )
+        except Exception as e:
+            logger.error(f"Failed to parse PDF: {e}")
+            return None
+    
+    def get_job(self, job_id: str, user_id: str) -> Optional[JobResponse]:
+        """Get a job by ID."""
+        job = self._cache.get(job_id)
+        if not job:
+            return None
+        
+        meta = self._get_user_job_meta(user_id, job_id)
+        match = self._cache.get_match(job_id)
+        
+        return self._job_to_response(job, meta, match)
+    
+    def update_job(self, job_id: str, user_id: str, **kwargs) -> Optional[JobResponse]:
+        """Update user-specific job metadata."""
+        job = self._cache.get(job_id)
+        if not job:
+            return None
+        
+        # Update user metadata
+        self._set_user_job_meta(user_id, job_id, **kwargs)
+        
+        meta = self._get_user_job_meta(user_id, job_id)
+        match = self._cache.get_match(job_id)
+        
+        return self._job_to_response(job, meta, match)
+    
+    def delete_job(self, job_id: str, user_id: str) -> bool:
+        """Delete a job (or just user's association with it)."""
+        # Remove user metadata
+        all_meta = self._load_user_job_metadata(user_id)
+        if job_id in all_meta:
+            del all_meta[job_id]
+            self._save_user_job_metadata(user_id, all_meta)
+            return True
+        
+        # If job exists in cache, mark as archived instead
+        job = self._cache.get(job_id)
+        if job:
+            self._set_user_job_meta(user_id, job_id, status=JobStatus.ARCHIVED)
+            return True
+        
+        return False

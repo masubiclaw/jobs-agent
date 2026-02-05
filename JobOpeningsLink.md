@@ -1,8 +1,6 @@
 # Job Openings URLs
 
 ## Seattle Area - Fortune 500
-- [Amazon](https://www.amazon.jobs/en/search)
-- [Microsoft](https://careers.microsoft.com/)
 - [Costco](https://careers.costco.com/jobs)
 - [Starbucks](https://careers.starbucks.com/)
 - [Nordstrom](https://careers.nordstrom.com/jobs)
@@ -24,6 +22,36 @@
 - [Redfin Engineering](https://careers.redfin.com/us/en/c/engineering-product-jobs)
 - [avvo](https://www.avvo.com/about_avvo/jobs#jobs)
 - [Allrecipes](https://www.people.inc/careers)
+- [Qualtrics](https://www.qualtrics.com/careers/us/en/seattle)
+- [Snowflake](https://careers.snowflake.com/)
+- [DocuSign](https://careers.docusign.com/)
+- [Outreach](https://www.outreach.io/company/working-at-outreach)
+- [Remitly](https://careers.remitly.com/)
+- [Apptio](https://careers.apptio.com/)
+- [Okta](https://www.okta.com/company/careers/)
+- [Highspot](https://www.highspot.com/careers/)
+- [Amperity](https://amperity.com/careers)
+- [Icertis](https://www.icertis.com/company/careers/)
+- [Porch Group](https://porch.com/about/careers)
+- [Ookla](https://www.ookla.com/about/careers)
+- [Axon](https://www.axon.com/careers)
+- [Radiant Logic](https://www.radiantlogic.com/company/careers/)
+- [Pushpay](https://pushpay.com/about-us/careers/)
+- [Karat](https://karat.com/careers/)
+- [Seeq](https://www.seeq.com/careers/)
+- [Databricks](https://databricks.com/company/careers)
+- [Avalara](https://careers.avalara.com/)
+- [Tanium](https://www.tanium.com/careers)
+- [Salesforce](https://careers.salesforce.com/)
+- [Adobe](https://careers.adobe.com/)
+- [Oracle](https://careers.oracle.com/)
+- [SAP](https://jobs.sap.com/)
+- [Uber](https://www.uber.com/us/en/careers/)
+- [DoorDash](https://careers.doordash.com/)
+- [Dropbox](https://www.dropbox.com/jobs)
+- [LinkedIn](https://careers.linkedin.com/)
+- [Nvidia](https://www.nvidia.com/en-us/about-nvidia/careers/)
+- [Intel](https://jobs.intel.com/)
 
 ## Seattle Area - Gaming
 - [Valve](https://www.valvesoftware.com/jobs)
@@ -93,6 +121,3 @@
 - [FBI](https://apply.fbijobs.gov/psc/ps/EMPLOYEE/HRMS/c/HRS_HRAM_FL.HRS_CG_SEARCH_FL.GBL?Page=HRS_APP_SCHJOB_FL&Action=U)
 - [CIA](https://www.cia.gov/ehl/careers)
 - [VRChat](https://jobs.lever.co/vrchat)
-
-
-

@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """
-Run the full job pipeline: search -> clean -> match -> generate.
+Run the full job pipeline: search -> clean -> fetch -> match -> generate.
 
-Combines job searching, cleaning dead jobs, matching, and document generation
-into a single workflow. Document generation is enabled by default.
+Combines job searching, cleaning dead jobs, fetching descriptions, matching,
+and document generation into a single workflow. All steps enabled by default.
 
 Usage:
-    # Full pipeline with defaults (search, match, generate for >= 70%)
+    # Full pipeline with defaults
     python scripts/run_pipeline.py
     
-    # With cleaning dead jobs
-    python scripts/run_pipeline.py --clean
+    # Skip cleaning dead jobs
+    python scripts/run_pipeline.py --no-clean
+    
+    # Skip fetching descriptions
+    python scripts/run_pipeline.py --no-fetch
     
     # Skip document generation
     python scripts/run_pipeline.py --no-generate
@@ -542,15 +545,18 @@ def run_document_generation(cache, args, min_score: int = 70):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Run the full job pipeline: search -> clean -> match -> generate",
+        description="Run the full job pipeline: search -> clean -> fetch -> match -> generate",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Full pipeline (search, match, generate for >= 70%)
+  # Full pipeline (all steps enabled by default)
   python scripts/run_pipeline.py
   
-  # With cleaning dead jobs
-  python scripts/run_pipeline.py --clean
+  # Skip cleaning dead jobs
+  python scripts/run_pipeline.py --no-clean
+  
+  # Skip fetching descriptions
+  python scripts/run_pipeline.py --no-fetch
   
   # Skip document generation
   python scripts/run_pipeline.py --no-generate
@@ -583,8 +589,9 @@ Examples:
     parser.add_argument("--limit", type=int, default=0, help="Limit jobs to match")
     parser.add_argument("--top", type=int, default=15, help="Show top N matches (default: 15)")
     
-    # Clean arguments
-    parser.add_argument("--clean", action="store_true", help="Clean dead/expired jobs from cache")
+    # Clean arguments (enabled by default)
+    parser.add_argument("--clean", action="store_true", default=True, help="Clean dead/expired jobs from cache (default: on)")
+    parser.add_argument("--no-clean", action="store_true", help="Skip cleaning dead jobs")
     parser.add_argument("--check-urls", action="store_true", help="Also validate URLs are still accessible")
     parser.add_argument("--older-than", type=int, default=0, help="Remove jobs older than N days")
     
@@ -597,7 +604,8 @@ Examples:
     parser.add_argument("--dry-run", action="store_true", help="Preview mode for clean and generate")
     
     # Other options
-    parser.add_argument("--fetch", action="store_true", help="Fetch missing descriptions")
+    parser.add_argument("--fetch", action="store_true", default=True, help="Fetch missing descriptions (default: on)")
+    parser.add_argument("--no-fetch", action="store_true", help="Skip fetching missing descriptions")
     parser.add_argument("--no-exclude", action="store_true", help="Disable exclusion filtering")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     
@@ -657,16 +665,16 @@ Examples:
     else:
         pipeline_stats["search"] = {"type": "skipped"}
     
-    # Step 2: Clean dead jobs (optional)
-    if args.clean:
+    # Step 2: Clean dead jobs (default: on, skip with --no-clean)
+    if args.clean and not args.no_clean:
         clean_result = run_clean_jobs(cache, args)
         pipeline_stats["clean"] = {
             "removed": clean_result.get("removed", 0),
             "would_remove": clean_result.get("would_remove", 0),
         }
     
-    # Step 3: Fetch descriptions (optional)
-    if args.fetch:
+    # Step 3: Fetch descriptions (default: on, skip with --no-fetch)
+    if args.fetch and not args.no_fetch:
         run_fetch_descriptions(cache, limit=args.limit or 100)
         pipeline_stats["fetch"] = {"enabled": True}
     

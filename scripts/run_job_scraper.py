@@ -10,6 +10,7 @@ Usage:
     python scripts/run_job_scraper.py --source Boeing    # Scrape single source
     python scripts/run_job_scraper.py --category Aerospace  # Scrape category
     python scripts/run_job_scraper.py --all              # Scrape all sources (SLOW!)
+    python scripts/run_job_scraper.py --all --workers 5  # Parallel scrape (FAST!)
     python scripts/run_job_scraper.py --max-sources 5    # Scrape first 5 sources
     python scripts/run_job_scraper.py --resume           # Resume interrupted scrape
     python scripts/run_job_scraper.py --status           # Show checkpoint status
@@ -103,6 +104,7 @@ Examples:
     parser.add_argument("--verbose", "-v", action="store_true", help="Show progress for each source")
     parser.add_argument("--exclude", type=str, help="Companies to exclude (comma-separated), overrides profile")
     parser.add_argument("--no-exclude", action="store_true", help="Disable exclusion filtering")
+    parser.add_argument("--workers", "-w", type=int, default=5, help="Parallel workers (default: 5)")
     args = parser.parse_args()
     
     # Load exclusions from profile or command line
@@ -147,7 +149,7 @@ Examples:
         print("=" * 70)
         print("JOB SOURCES SUMMARY")
         print("=" * 70)
-        print(summary["toon_summary"])
+        print(summary["toon_report"])
         print()
         print("Usage examples:")
         print("  python scripts/run_job_scraper.py --source Boeing")
@@ -168,6 +170,8 @@ Examples:
     print(f"📦 Initial cache: {initial_count} jobs")
     if args.resume:
         print("📥 Mode: RESUME from checkpoint")
+    if args.workers > 1:
+        print(f"⚡ Parallel mode: {args.workers} workers")
     if exclusions and not args.no_exclude:
         print(f"🚫 Excluding companies: {', '.join(exclusions)}")
     print()
@@ -225,6 +229,7 @@ Examples:
             resume=args.resume,
             skip_same_day=not args.force,
             on_progress=on_progress if args.verbose else None,
+            workers=args.workers,
         )
 
     # Show results

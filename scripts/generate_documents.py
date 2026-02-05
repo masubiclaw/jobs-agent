@@ -362,12 +362,43 @@ Examples:
         print("Error: --job-id or --top is required. Use --list to see available jobs.")
         sys.exit(1)
     
+    # Get job details for skip check
+    cache = get_cache()
+    job = cache.get(args.job_id)
+    company = job.get("company", "Unknown") if job else "Unknown"
+    title = job.get("title", "Unknown") if job else "Unknown"
+    
     print("=" * 80)
     print("DOCUMENT GENERATION")
     print("=" * 80)
     print(f"Job ID: {args.job_id}")
+    print(f"Company: {company}")
+    print(f"Title: {title}")
     print(f"Type: {args.type}")
     print()
+    
+    # Check for existing documents
+    if skip_existing:
+        existing = _check_existing_docs(company, args.type)
+        
+        should_skip = False
+        skip_reason = ""
+        
+        if args.type == "resume" and existing["resume"]:
+            should_skip = True
+            skip_reason = "Resume already exists"
+        elif args.type == "cover-letter" and existing["cover_letter"]:
+            should_skip = True
+            skip_reason = "Cover letter already exists"
+        elif args.type == "both" and existing["resume"] and existing["cover_letter"]:
+            should_skip = True
+            skip_reason = "Both documents already exist"
+        
+        if should_skip:
+            print(f"⏭️  SKIPPED: {skip_reason}")
+            print(f"   Use --no-skip-existing to regenerate")
+            print("=" * 80)
+            return
     
     if args.type == "resume":
         result = generate_resume(args.job_id, args.profile_id)

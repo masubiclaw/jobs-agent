@@ -5,6 +5,8 @@ import logging
 import os
 import re
 import time
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from datetime import datetime
@@ -935,12 +937,14 @@ def scrape_job_links(
     resume: bool = False,  # Resume from checkpoint
     skip_same_day: bool = True,  # Skip sources scraped today
     on_progress: callable = None,  # Progress callback(completed, total, source_result)
+    workers: int = 5,  # Number of parallel workers (default 5 for speed)
 ) -> Dict[str, Any]:
     """
     Scrape job openings from all links in a markdown file.
     
     ⚠️ WARNING: This tool is SLOW and resource-intensive. Use parsimoniously!
-    - Full scrape of all sources: 10-20 minutes
+    - Full scrape of all sources: 10-20 minutes (sequential)
+    - With 3-5 workers: 3-7 minutes (parallel)
     - Single category: 2-5 minutes
     - Uses LLM for extraction (tokens consumed per source)
     - Consider using get_links_summary first to see available sources
@@ -961,6 +965,7 @@ def scrape_job_links(
         delay_seconds: Delay between requests
         resume: Resume from last checkpoint (skip already-scraped sources)
         on_progress: Callback function(completed, total, source_result) for progress updates
+        workers: Number of parallel workers (default 1 = sequential, recommend 3-5 for parallel)
     
     Returns:
         Dict with scraping results and statistics
@@ -1003,11 +1008,13 @@ def scrape_job_links(
     # Initialize progress tracking
     progress.start(len(all_links), categories)
     
-    logger.info(f"🚀 Starting scrape of {len(all_links)} sources (pagination={'on' if follow_pagination else 'off'})")
+    parallel_mode = workers > 1
+    logger.info(f"🚀 Starting scrape of {len(all_links)} sources (pagination={'on' if follow_pagination else 'off'}, workers={workers})")
     if resume and skipped_count > 0:
         logger.info(f"   ⏭️  Resuming: {skipped_count} sources already done, {len(all_links) - skipped_count} remaining")
     logger.info("=" * 60)
     
+    # Shared state with thread locks for parallel execution
     all_jobs = []
     all_job_urls = []  # Collect individual job URLs for potential future scraping
     successful_sources = []
@@ -1015,74 +1022,107 @@ def scrape_job_links(
     total_added = 0
     total_duplicates = 0
     completed = 0
+    state_lock = threading.Lock()  # Protect shared state
     
+    # Pre-filter links based on resume/skip_same_day to build actual work list
+    links_to_scrape = []
     for i, link in enumerate(all_links):
         # Check if already completed (resume mode)
         if resume and progress.is_completed(link["name"]):
-            # Include stats from previous run
             prev = progress.get_completed_sources().get(link["name"], {})
-            if prev.get("success"):
-                successful_sources.append({
-                    "name": link["name"],
-                    "category": link["category"],
-                    "jobs_found": prev.get("jobs_found", 0),
-                    "resumed": True
-                })
-                total_added += prev.get("jobs_cached", 0)
-            else:
-                failed_sources.append({"name": link["name"], "reason": prev.get("error", "Previous failure"), "resumed": True})
-            completed += 1
+            with state_lock:
+                if prev.get("success"):
+                    successful_sources.append({
+                        "name": link["name"],
+                        "category": link["category"],
+                        "jobs_found": prev.get("jobs_found", 0),
+                        "resumed": True
+                    })
+                    total_added += prev.get("jobs_cached", 0)
+                else:
+                    failed_sources.append({"name": link["name"], "reason": prev.get("error", "Previous failure"), "resumed": True})
+                completed += 1
             continue
         
         # Check if already scraped today
         if skip_same_day and history.was_scraped_today(link["name"]):
-            logger.info(f"\n[{i+1}/{len(all_links)}] ⏭️  {link['name']} - already scraped today, skipping")
-            completed += 1
+            logger.info(f"[{i+1}/{len(all_links)}] ⏭️  {link['name']} - already scraped today, skipping")
+            with state_lock:
+                completed += 1
             continue
         
-        logger.info(f"\n[{i+1}/{len(all_links)}] 📡 {link['name']} ({link['category']})")
+        links_to_scrape.append((i, link))
+    
+    def scrape_source_worker(idx_link):
+        """Worker function to scrape a single source."""
+        nonlocal total_added, total_duplicates, completed
+        i, link = idx_link
+        
+        # Rate limiting delay
+        time.sleep(delay_seconds)
+        
+        if parallel_mode:
+            logger.info(f"[{i+1}/{len(all_links)}] 📡 {link['name']} ({link['category']})")
+        else:
+            logger.info(f"\n[{i+1}/{len(all_links)}] 📡 {link['name']} ({link['category']})")
         
         source_jobs_found = 0
         source_jobs_cached = 0
         source_success = False
         source_error = ""
+        jobs = []
+        job_urls = []
         
-        # Use pagination if enabled
-        if follow_pagination:
-            scraped = scrape_with_pagination(link["url"], max_pages=max_pages_per_source)
-            if scraped and scraped.get("job_urls"):
-                all_job_urls.extend(scraped["job_urls"])
-        else:
-            scraped = scrape_webpage(link["url"])
-        
-        if scraped:
-            jobs = extract_jobs_with_llm(scraped, link["name"], link["category"])
+        try:
+            # Use pagination if enabled
+            if follow_pagination:
+                scraped = scrape_with_pagination(link["url"], max_pages=max_pages_per_source)
+                if scraped and scraped.get("job_urls"):
+                    job_urls = scraped["job_urls"]
+            else:
+                scraped = scrape_webpage(link["url"])
             
+            if scraped:
+                jobs = extract_jobs_with_llm(scraped, link["name"], link["category"])
+                
+                if jobs:
+                    source_jobs_found = len(jobs)
+                    source_success = True
+                    
+                    # Cache with deduplication (thread-safe via cache's internal lock)
+                    if cache_results:
+                        result = cache_jobs_with_dedup(jobs, use_llm_dedup=use_llm_dedup)
+                        source_jobs_cached = result["added"]
+                        logger.info(f"   💾 {link['name']}: {result['added']} new, {result['duplicates']} duplicates")
+                else:
+                    source_error = "No jobs extracted"
+            else:
+                source_error = "Scrape failed"
+        except Exception as e:
+            source_error = str(e)[:100]
+            logger.error(f"   ❌ {link['name']}: {source_error}")
+        
+        # Update shared state with lock
+        with state_lock:
             if jobs:
                 all_jobs.extend(jobs)
-                source_jobs_found = len(jobs)
-                source_success = True
+            if job_urls:
+                all_job_urls.extend(job_urls)
+            
+            if source_success:
                 successful_sources.append({
                     "name": link["name"],
                     "category": link["category"],
-                    "jobs_found": len(jobs)
+                    "jobs_found": source_jobs_found
                 })
-                
-                # Cache with deduplication
-                if cache_results:
-                    result = cache_jobs_with_dedup(jobs, use_llm_dedup=use_llm_dedup)
-                    source_jobs_cached = result["added"]
-                    total_added += result["added"]
-                    total_duplicates += result["duplicates"]
-                    logger.info(f"   💾 Cached: {result['added']} new, {result['duplicates']} duplicates")
+                total_added += source_jobs_cached
             else:
-                source_error = "No jobs extracted"
-                failed_sources.append({"name": link["name"], "reason": "No jobs extracted"})
-        else:
-            source_error = "Scrape failed"
-            failed_sources.append({"name": link["name"], "reason": "Scrape failed"})
+                failed_sources.append({"name": link["name"], "reason": source_error})
+            
+            # Note: total_duplicates tracked in cache_jobs_with_dedup
+            completed += 1
         
-        # Save checkpoint
+        # Save checkpoint (thread-safe via progress's internal handling)
         progress.mark_complete(
             source_name=link["name"],
             url=link["url"],
@@ -1092,23 +1132,37 @@ def scrape_job_links(
             error=source_error
         )
         
-        # Mark as scraped today (for same-day skip logic)
+        # Mark as scraped today
         if source_success:
             history.mark_scraped(link["name"])
         
-        completed += 1
-        
         # Progress callback
         if on_progress:
-            on_progress(completed, len(all_links), {
+            with state_lock:
+                current_completed = completed
+            on_progress(current_completed, len(all_links), {
                 "name": link["name"],
                 "jobs_found": source_jobs_found,
                 "jobs_cached": source_jobs_cached,
                 "success": source_success,
             })
         
-        if i < len(all_links) - 1:
-            time.sleep(delay_seconds)
+        return link["name"], source_success, source_jobs_found, source_jobs_cached
+    
+    # Execute scraping - parallel or sequential
+    if parallel_mode and links_to_scrape:
+        logger.info(f"⚡ Parallel mode: {workers} workers processing {len(links_to_scrape)} sources")
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(scrape_source_worker, idx_link): idx_link for idx_link in links_to_scrape}
+            for future in as_completed(futures):
+                try:
+                    name, success, jobs_found, jobs_cached = future.result()
+                except Exception as e:
+                    logger.error(f"Worker error: {e}")
+    else:
+        # Sequential execution
+        for idx_link in links_to_scrape:
+            scrape_source_worker(idx_link)
     
     # Mark complete
     progress.finish()
