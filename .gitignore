@@ -71,3 +71,6 @@ eval/
 
 # Evaluation data
 eval/
+
+# Environment volume file
+envfile

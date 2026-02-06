@@ -20,8 +20,10 @@ import argparse
 import json
 import logging
 import re
+import os
 import sys
 from pathlib import Path
+from dotenv import load_dotenv
 
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -32,6 +34,14 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+# Load .env
+_env_file = Path(__file__).parent.parent / ".env"
+if _env_file.exists():
+    logger.info("Read env file")
+    load_dotenv(_env_file)
+
+parser_model = os.getenv("OLLAMA_FAST_MODEL", "gemma3:12b")
 
 # Try to import PDF library
 try:
@@ -72,9 +82,10 @@ def extract_text_from_pdf(pdf_path: Path) -> str:
         )
 
 
-def parse_resume_with_llm(resume_text: str, model: str = "gemma3:12b") -> dict:
+def parse_resume_with_llm(resume_text: str, model: str = parser_model) -> dict:
     """Use Ollama to parse resume text into structured data."""
-    import requests
+    import requests, os
+    LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", 120))
     
     prompt = f"""Parse this resume into structured JSON format. Extract ALL information you can find.
 
@@ -124,15 +135,17 @@ IMPORTANT:
 - Output ONLY valid JSON, no explanations"""
 
     try:
+        base_url = os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
+        url = base_url.rstrip("/") + "/api/generate"
         response = requests.post(
-            "http://localhost:11434/api/generate",
+            url,
             json={
                 "model": model,
                 "prompt": prompt,
                 "stream": False,
                 "options": {"temperature": 0.1}
             },
-            timeout=120
+            timeout=LLM_TIMEOUT
         )
         response.raise_for_status()
         
@@ -183,8 +196,12 @@ def create_profile_from_parsed(parsed: dict, profile_id: str = None) -> dict:
     
     # Add skills
     for skill in parsed.get("skills", []):
-        skill_name = skill.get("name", "")
-        level = skill.get("level", "intermediate")
+        if isinstance(skill, dict):
+            skill_name = skill.get("name", "")
+            level = skill.get("level", "intermediate")
+        else:
+            skill_name = str(skill).strip()
+            level = "intermediate"
         if skill_name:
             store.add_skill(skill_name, level, profile_id)
     
@@ -258,7 +275,10 @@ def format_preview(parsed: dict) -> str:
     ]
     
     for skill in parsed.get("skills", [])[:15]:
-        lines.append(f"  - {skill.get('name', '?')}: {skill.get('level', '?')}")
+        if isinstance(skill, dict):
+            lines.append(f"  - {skill.get('name', '?')}: {skill.get('level', '?')}")
+        else:
+            lines.append(f"  - {skill}")
     if len(parsed.get("skills", [])) > 15:
         lines.append(f"  ... and {len(parsed['skills']) - 15} more")
     

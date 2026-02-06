@@ -38,10 +38,10 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 LLM_MODEL = os.getenv("LLM_MODEL", "ollama/gemma3:27b")
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
 FAST_MODEL = os.getenv("OLLAMA_FAST_MODEL", "gemma3:12b")
 REQUEST_TIMEOUT = 15
-LLM_TIMEOUT = 120
+LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", 120))
 
 # MLX-LM Configuration (optional fine-tuned model)
 MLX_MODEL_PATH = os.getenv("MLX_MODEL_PATH", "")  # Path to fine-tuned MLX model

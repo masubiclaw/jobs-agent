@@ -32,7 +32,7 @@ LLM_PROVIDER=ollama
 LLM_MODEL=ollama/gemma3:27b
 OLLAMA_MODEL=gemma3:27b
 OLLAMA_FAST_MODEL=gemma3:12b
-OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_API_BASE=http://localhost:11434
 JWT_SECRET_KEY=your-secure-secret-key-change-this
 EOF
 
@@ -92,6 +92,36 @@ python scripts/clean_dead_jobs.py --check-urls --older-than 14 --dry-run  # Prev
 ```
 
 See [docs/cli-reference.md](docs/cli-reference.md) for complete CLI documentation.
+
+
+## Docker
+
+You may build a containerized version of jobs-agent. This separates the Ollama model in one container, and the jobs agent in a second one.
+
+First, copy `env.template` into `envfile`. Edit this file, it will be projected into the container. Then run docker to build and bring the containers up.
+
+```
+$ cd jobs-agent
+$ cp env.template envfile
+$ vim envfile
+$ mkdir generated_documents
+$ docker build -t jobs-agent .
+$ docker compose up
+```
+
+After that, you will need to pull the gemma models you've set in the env file since we're running the default image of Ollama.
+
+```
+$ docker exec -it ollama ollama pull gemma3:27b
+$ docker exec -it ollama ollama pull gemma3:12b
+```
+
+Head your browser to http://localhost:8000 or use the CLI scripts right on the container.
+
+```
+$ docker exec -it jobs-agent /bin/bash
+$ python3 scripts/add_profile.py
+```
 
 ## Architecture
 
