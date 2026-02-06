@@ -27,8 +27,9 @@ REQUEST_TIMEOUT = 30
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 
 # LLM configuration - use 12b model for faster extraction
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-SCRAPER_MODEL = os.getenv("SCRAPER_MODEL", "gemma3:12b")  # Faster model for extraction
+OLLAMA_BASE_URL = os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
+SCRAPER_MODEL = os.getenv("OLLAMA_FAST_MODEL", "gemma3:12b")  # Faster model for extraction
+LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", 120))
 
 # Sites that require JavaScript rendering (Playwright)
 JS_RENDERED_SITES = [
@@ -670,7 +671,7 @@ JSON array:"""
                 "stream": False,
                 "options": {"temperature": 0, "num_predict": 2500}
             },
-            timeout=120
+            timeout=LLM_TIMEOUT
         )
         response.raise_for_status()
         elapsed = time.time() - start
@@ -871,7 +872,7 @@ Response:"""
                 "stream": False,
                 "options": {"temperature": 0, "num_predict": 50}
             },
-            timeout=30
+            timeout=LLM_TIMEOUT
         )
         response.raise_for_status()
         

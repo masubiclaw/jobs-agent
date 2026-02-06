@@ -15,9 +15,9 @@ from dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
 # Configuration
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma3:12b")
-LLM_TIMEOUT = 120
+LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", 120))
 
 # Length constraints
 RESUME_MIN_WORDS = 400  # Resume should have enough content to fill a page

@@ -47,7 +47,7 @@ LLM_PROVIDER=ollama
 LLM_MODEL=ollama/gemma3:27b
 OLLAMA_MODEL=gemma3:27b
 OLLAMA_FAST_MODEL=gemma3:12b
-OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_API_BASE=http://localhost:11434
 
 # JWT Configuration
 JWT_SECRET_KEY=your-secret-key-here

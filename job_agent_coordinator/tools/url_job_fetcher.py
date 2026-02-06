@@ -19,8 +19,9 @@ from bs4 import BeautifulSoup
 logger = logging.getLogger(__name__)
 
 # LLM configuration
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-SCRAPER_MODEL = os.getenv("SCRAPER_MODEL", "gemma3:12b")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
+SCRAPER_MODEL = os.getenv("OLLAMA_FAST_MODEL", "gemma3:12b")
+LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", 120))
 
 # Browser configuration
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -203,7 +204,7 @@ JSON:"""
                 "stream": False,
                 "options": {"temperature": 0, "num_predict": 4000}
             },
-            timeout=120
+            timeout=LLM_TIMEOUT
         )
         response.raise_for_status()
         elapsed = time.time() - start

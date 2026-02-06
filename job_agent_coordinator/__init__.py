@@ -37,7 +37,8 @@ def _check_ollama():
     """Check Ollama availability."""
     try:
         import httpx
-        resp = httpx.get("http://localhost:11434/api/tags", timeout=5)
+        base = os.getenv("OLLAMA_API_BASE", "http://localhost:11434").rstrip("/")
+        resp = httpx.get(f"{base}/api/tags", timeout=5)
         if resp.status_code == 200:
             models = [m["name"] for m in resp.json().get("models", [])]
             logger.info(f"🦙 Ollama ready: {', '.join(models[:4])}")
