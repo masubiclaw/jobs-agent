@@ -5,7 +5,7 @@
 - **FastAPI** - Web framework
 - **Pydantic** - Data validation
 - **python-jose** - JWT handling
-- **passlib** - Password hashing
+- **bcrypt** - Password hashing
 - **uvicorn** - ASGI server
 
 ## Project Structure
@@ -60,7 +60,7 @@ ACCESS_TOKEN_EXPIRE_HOURS = 24
 
 ### Password Hashing
 
-Uses bcrypt via passlib:
+Uses bcrypt directly (passwords over 72 bytes are truncated per bcrypt limits):
 
 ```python
 from api.auth import hash_password, verify_password
