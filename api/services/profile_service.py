@@ -259,9 +259,9 @@ class ProfileService:
         if "skills" in kwargs and kwargs["skills"] is not None:
             profile["skills"] = [
                 {
-                    "name": s.name,
-                    "level": s.level.value if hasattr(s.level, 'value') else s.level,
-                    "added_at": s.added_at.isoformat() if s.added_at else datetime.now().isoformat()
+                    "name": s.get("name", s.name) if isinstance(s, dict) else s.name,
+                    "level": s.get("level", "intermediate") if isinstance(s, dict) else (s.level.value if hasattr(s.level, 'value') else s.level),
+                    "added_at": (s.get("added_at") or datetime.now().isoformat()) if isinstance(s, dict) else (s.added_at.isoformat() if s.added_at else datetime.now().isoformat())
                 }
                 for s in kwargs["skills"]
             ]
@@ -270,12 +270,12 @@ class ProfileService:
         if "experience" in kwargs and kwargs["experience"] is not None:
             profile["experience"] = [
                 {
-                    "title": e.title,
-                    "company": e.company,
-                    "start_date": e.start_date,
-                    "end_date": e.end_date,
-                    "description": e.description,
-                    "added_at": e.added_at.isoformat() if e.added_at else datetime.now().isoformat()
+                    "title": e.get("title", "") if isinstance(e, dict) else e.title,
+                    "company": e.get("company", "") if isinstance(e, dict) else e.company,
+                    "start_date": e.get("start_date", "") if isinstance(e, dict) else e.start_date,
+                    "end_date": e.get("end_date", "present") if isinstance(e, dict) else e.end_date,
+                    "description": e.get("description", "") if isinstance(e, dict) else e.description,
+                    "added_at": (e.get("added_at") or datetime.now().isoformat()) if isinstance(e, dict) else (e.added_at.isoformat() if e.added_at else datetime.now().isoformat())
                 }
                 for e in kwargs["experience"]
             ]
@@ -283,25 +283,44 @@ class ProfileService:
         # Update preferences
         if "preferences" in kwargs and kwargs["preferences"] is not None:
             prefs = kwargs["preferences"]
-            profile["preferences"] = {
-                "target_roles": prefs.target_roles,
-                "target_locations": prefs.target_locations,
-                "remote_preference": prefs.remote_preference.value if hasattr(prefs.remote_preference, 'value') else prefs.remote_preference,
-                "salary_min": prefs.salary_min,
-                "salary_max": prefs.salary_max,
-                "job_types": prefs.job_types,
-                "industries": prefs.industries,
-                "excluded_companies": [c.lower() for c in prefs.excluded_companies],
-            }
+            if isinstance(prefs, dict):
+                profile["preferences"] = {
+                    "target_roles": prefs.get("target_roles", []),
+                    "target_locations": prefs.get("target_locations", []),
+                    "remote_preference": prefs.get("remote_preference", "hybrid"),
+                    "salary_min": prefs.get("salary_min"),
+                    "salary_max": prefs.get("salary_max"),
+                    "job_types": prefs.get("job_types", ["full-time"]),
+                    "industries": prefs.get("industries", []),
+                    "excluded_companies": [c.lower() for c in prefs.get("excluded_companies", [])],
+                }
+            else:
+                profile["preferences"] = {
+                    "target_roles": prefs.target_roles,
+                    "target_locations": prefs.target_locations,
+                    "remote_preference": prefs.remote_preference.value if hasattr(prefs.remote_preference, 'value') else prefs.remote_preference,
+                    "salary_min": prefs.salary_min,
+                    "salary_max": prefs.salary_max,
+                    "job_types": prefs.job_types,
+                    "industries": prefs.industries,
+                    "excluded_companies": [c.lower() for c in prefs.excluded_companies],
+                }
         
         # Update resume
         if "resume" in kwargs and kwargs["resume"] is not None:
             resume = kwargs["resume"]
-            profile["resume"] = {
-                "summary": resume.summary,
-                "content": resume.content,
-                "last_updated": datetime.now().isoformat(),
-            }
+            if isinstance(resume, dict):
+                profile["resume"] = {
+                    "summary": resume.get("summary", ""),
+                    "content": resume.get("content", ""),
+                    "last_updated": datetime.now().isoformat(),
+                }
+            else:
+                profile["resume"] = {
+                    "summary": resume.summary,
+                    "content": resume.content,
+                    "last_updated": datetime.now().isoformat(),
+                }
         
         self._save_profile(user_id, profile)
         
