@@ -64,6 +64,20 @@
 - [Funko](https://funko.careers/)
 - [Holland America Line](https://hollandamericagroup.pinpointhq.com/)
 
+## Data Center Companies (Seattle & National)
+- [Sabey Data Centers](https://sabeydatacenters.com/about/careers) - Seattle HQ
+- [Equinix](https://careers.equinix.com/jobs/search) - SE2, SE3, SE4 facilities in Seattle/Kent
+- [Digital Realty](https://careers.digitalrealty.com/) - SEA10, SEA11 facilities
+- [EdgeConneX](https://www.edgeconnex.com/company/careers/) - SEA01 facility
+- [TierPoint](https://www.tierpoint.com/about-us/careers/) - Seattle operations
+- [H5 Data Centers](https://h5datacenters.com/data-center-careers.html) - Seattle facility
+- [DataBank](https://careers.databankimx.com/) - 75 data centers across US
+- [Vantage Data Centers](https://vantage-dc.com/company/careers/) - Hyperscale infrastructure
+- [QTS Data Centers](https://careers.qtsdatacenters.com/us/en/) - Global digital infrastructure
+- [CyrusOne](https://www.cyrusone.com/careers) - North America & Europe
+- [Stack Infrastructure](https://www.stackinfra.com/about/careers/) - Global data center developer
+- [Flexential](https://www.flexential.com/careers) - 19 markets, 3M sq ft
+
 ## Tech (Other)
 - [Anthropic](https://www.anthropic.com/jobs)
 - [X](https://x.ai/careers/open-roles?location=seattle%252C+wa&dept=4047058007,4052172007,4046295007,4024733007,4062428007,4046295007,4052172007,4046294007,4042930007)
