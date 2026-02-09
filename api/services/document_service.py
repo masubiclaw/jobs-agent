@@ -4,9 +4,9 @@ import logging
 import hashlib
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
-from api.models import DocumentResponse, DocumentType, QualityScores
+from api.models import DocumentResponse, DocumentType, QualityScores, DocumentListItem
 from api.services.profile_service import ProfileService
 from api.services.job_service import JobService
 
@@ -139,6 +139,11 @@ class DocumentService:
                 "document_type": document_type.value,
                 "pdf_path": result.get("pdf_path"),
                 "overall_score": quality_scores.overall_score,
+                "job_title": job_response.title,
+                "job_company": job_response.company,
+                "job_url": job_response.url or None,
+                "reviewed": False,
+                "is_good": None,
                 "created_at": datetime.now().isoformat()
             }
             self._save_docs_index(user_id, index)
@@ -211,6 +216,43 @@ class DocumentService:
             "notes": profile.notes
         }
     
+    def list_documents(self, user_id: str, limit: int = 100) -> List[DocumentListItem]:
+        """List all generated documents for a user."""
+        index = self._load_docs_index(user_id)
+        items = []
+        for doc_id, doc in index.items():
+            items.append(DocumentListItem(
+                id=doc.get("id", doc_id),
+                job_id=doc.get("job_id", ""),
+                profile_id=doc.get("profile_id", ""),
+                document_type=doc.get("document_type", "resume"),
+                job_title=doc.get("job_title", ""),
+                job_company=doc.get("job_company", ""),
+                job_url=doc.get("job_url"),
+                overall_score=doc.get("overall_score", 0),
+                reviewed=doc.get("reviewed", False),
+                is_good=doc.get("is_good"),
+                pdf_path=doc.get("pdf_path"),
+                created_at=doc.get("created_at", ""),
+            ))
+        # Sort by created_at desc
+        items.sort(key=lambda x: x.created_at, reverse=True)
+        return items[:limit]
+
+    def update_document_review(
+        self, user_id: str, doc_id: str, reviewed: Optional[bool] = None, is_good: Optional[bool] = None
+    ) -> bool:
+        """Update reviewed/is_good flags on a document."""
+        index = self._load_docs_index(user_id)
+        if doc_id not in index:
+            return False
+        if reviewed is not None:
+            index[doc_id]["reviewed"] = reviewed
+        if is_good is not None:
+            index[doc_id]["is_good"] = is_good
+        self._save_docs_index(user_id, index)
+        return True
+
     def _job_to_dict(self, job) -> Dict[str, Any]:
         """Convert job response to dict for existing tools."""
         return {

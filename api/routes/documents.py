@@ -1,9 +1,13 @@
 """Document generation routes."""
 
-from fastapi import APIRouter, HTTPException, status, Depends
+from typing import List
+from fastapi import APIRouter, HTTPException, status, Depends, Query
 from fastapi.responses import FileResponse
 
-from api.models import DocumentRequest, DocumentResponse, DocumentType, UserResponse
+from api.models import (
+    DocumentRequest, DocumentResponse, DocumentType, UserResponse,
+    DocumentListItem, DocumentReviewUpdate,
+)
 from api.auth import get_current_user
 from api.services.document_service import DocumentService
 
@@ -83,6 +87,38 @@ async def generate_application_package(
         )
     
     return result
+
+
+@router.get("/", response_model=List[DocumentListItem])
+async def list_documents(
+    limit: int = Query(100, ge=1, le=500),
+    current_user: UserResponse = Depends(get_current_user),
+    service: DocumentService = Depends(get_document_service)
+) -> List[DocumentListItem]:
+    """List all generated documents for the current user."""
+    return service.list_documents(current_user.id, limit)
+
+
+@router.patch("/{document_id}/review")
+async def update_document_review(
+    document_id: str,
+    update: DocumentReviewUpdate,
+    current_user: UserResponse = Depends(get_current_user),
+    service: DocumentService = Depends(get_document_service)
+) -> dict:
+    """Update reviewed/is_good flags on a document."""
+    success = service.update_document_review(
+        user_id=current_user.id,
+        doc_id=document_id,
+        reviewed=update.reviewed,
+        is_good=update.is_good,
+    )
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found"
+        )
+    return {"status": "updated", "document_id": document_id}
 
 
 @router.get("/{document_id}/download")

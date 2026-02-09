@@ -1,11 +1,12 @@
 """Admin routes for system management."""
 
-from typing import Optional
+from typing import Optional, List
 from fastapi import APIRouter, HTTPException, status, Depends, Query, BackgroundTasks
 
-from api.models import UserResponse
+from api.models import UserResponse, PipelineRunRequest, PipelineSchedulerUpdate
 from api.auth import get_current_admin_user
 from api.services.admin_service import AdminService
+from api.services.pipeline_service import get_pipeline_service, PipelineService
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -168,3 +169,80 @@ async def list_users(
 ) -> dict:
     """List all users (admin only)."""
     return service.list_users()
+
+
+# ── Pipeline Endpoints ──────────────────────────────────────
+
+@router.get("/pipeline/status")
+async def get_pipeline_status(
+    current_user: UserResponse = Depends(get_current_admin_user),
+) -> dict:
+    """Get pipeline scheduler state and current run info."""
+    return get_pipeline_service().get_status()
+
+
+@router.post("/pipeline/run")
+async def run_pipeline(
+    background_tasks: BackgroundTasks,
+    request: PipelineRunRequest = PipelineRunRequest(),
+    current_user: UserResponse = Depends(get_current_admin_user),
+) -> dict:
+    """Trigger a manual pipeline run."""
+    service = get_pipeline_service()
+    if service._is_running:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Pipeline is already running"
+        )
+
+    import asyncio
+    asyncio.ensure_future(service.run_pipeline_now(request.steps))
+
+    return {
+        "status": "started",
+        "message": f"Pipeline started with steps: {', '.join(request.steps)}"
+    }
+
+
+@router.post("/pipeline/scheduler")
+async def update_scheduler(
+    update: PipelineSchedulerUpdate,
+    current_user: UserResponse = Depends(get_current_admin_user),
+) -> dict:
+    """Enable/disable pipeline scheduler and set interval."""
+    service = get_pipeline_service()
+    if update.enabled:
+        service.start_scheduler(update.interval_hours)
+        return {
+            "status": "enabled",
+            "message": f"Scheduler enabled with {update.interval_hours}h interval"
+        }
+    else:
+        service.stop_scheduler()
+        return {"status": "disabled", "message": "Scheduler stopped"}
+
+
+@router.get("/pipeline/history")
+async def get_pipeline_history(
+    limit: int = Query(20, ge=1, le=100),
+    current_user: UserResponse = Depends(get_current_admin_user),
+) -> dict:
+    """Get past pipeline runs."""
+    return {"runs": get_pipeline_service().get_history(limit)}
+
+
+@router.get("/pipeline/logs")
+async def get_pipeline_logs(
+    limit: int = Query(200, ge=1, le=1000),
+    current_user: UserResponse = Depends(get_current_admin_user),
+) -> dict:
+    """Get pipeline log entries from ring buffer."""
+    return {"logs": get_pipeline_service().get_logs(limit)}
+
+
+@router.get("/pipeline/stats")
+async def get_pipeline_stats(
+    current_user: UserResponse = Depends(get_current_admin_user),
+) -> dict:
+    """Get aggregated pipeline stats."""
+    return get_pipeline_service().get_stats()

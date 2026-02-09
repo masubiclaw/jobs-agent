@@ -211,3 +211,66 @@ class DocumentResponse(BaseModel):
     quality_scores: Optional[QualityScores] = None
     iterations: int = 1
     created_at: datetime
+
+
+class DocumentListItem(BaseModel):
+    id: str
+    job_id: str
+    profile_id: str
+    document_type: DocumentType
+    job_title: str = ""
+    job_company: str = ""
+    job_url: Optional[str] = None
+    overall_score: float = 0
+    reviewed: bool = False
+    is_good: Optional[bool] = None
+    pdf_path: Optional[str] = None
+    created_at: str = ""
+
+
+class DocumentReviewUpdate(BaseModel):
+    reviewed: Optional[bool] = None
+    is_good: Optional[bool] = None
+
+
+# ── Pipeline Models ─────────────────────────────────────────
+
+class PipelineRunRequest(BaseModel):
+    steps: List[str] = ["search", "clean", "fetch", "match", "generate"]
+
+
+class PipelineSchedulerUpdate(BaseModel):
+    enabled: bool
+    interval_hours: float = 24.0
+
+
+class PipelineStatus(BaseModel):
+    scheduler_enabled: bool = False
+    interval_hours: float = 24.0
+    is_running: bool = False
+    last_run: Optional[str] = None
+    next_run: Optional[str] = None
+    current_step: Optional[str] = None
+
+
+class PipelineRunHistory(BaseModel):
+    id: str
+    started_at: str
+    finished_at: Optional[str] = None
+    duration_seconds: Optional[float] = None
+    status: str = "running"  # running, success, failed
+    steps: List[str] = []
+    jobs_found: int = 0
+    jobs_matched: int = 0
+    docs_generated: int = 0
+    error: Optional[str] = None
+
+
+class PipelineStats(BaseModel):
+    total_runs: int = 0
+    successful_runs: int = 0
+    failed_runs: int = 0
+    avg_duration_seconds: float = 0
+    total_jobs_found: int = 0
+    total_jobs_matched: int = 0
+    total_docs_generated: int = 0

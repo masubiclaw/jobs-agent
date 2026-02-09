@@ -14,6 +14,7 @@ import DocumentsPage from './pages/DocumentsPage'
 import AdminDashboard from './pages/admin/AdminDashboard'
 import AdminJobsPage from './pages/admin/AdminJobsPage'
 import AdminScraperPage from './pages/admin/AdminScraperPage'
+import AdminPipelinePage from './pages/admin/AdminPipelinePage'
 
 // Protected route component
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -88,6 +89,7 @@ function AppRoutes() {
         <Route path="admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
         <Route path="admin/jobs" element={<AdminRoute><AdminJobsPage /></AdminRoute>} />
         <Route path="admin/scraper" element={<AdminRoute><AdminScraperPage /></AdminRoute>} />
+        <Route path="admin/pipeline" element={<AdminRoute><AdminPipelinePage /></AdminRoute>} />
       </Route>
     </Routes>
   )

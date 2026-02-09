@@ -1,15 +1,16 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
-import { 
-  Home, 
-  User, 
-  Briefcase, 
-  FileText, 
-  Settings, 
+import {
+  Home,
+  User,
+  Briefcase,
+  FileText,
+  Settings,
   LogOut,
   Star,
   Plus,
-  Shield
+  Shield,
+  Workflow,
 } from 'lucide-react'
 
 export default function Layout() {
@@ -32,6 +33,7 @@ export default function Layout() {
 
   const adminItems = user?.is_admin ? [
     { to: '/admin', icon: Shield, label: 'Admin' },
+    { to: '/admin/pipeline', icon: Workflow, label: 'Pipeline' },
   ] : []
 
   return (
