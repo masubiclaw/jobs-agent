@@ -42,9 +42,11 @@ class UserStore:
         if self.users_file.exists():
             try:
                 data = from_toon(self.users_file.read_text())
-                if isinstance(data, dict) and "users" in data:
-                    return data["users"]
-                return data if isinstance(data, dict) else {}
+                users_data = data.get("users", data) if isinstance(data, dict) else data
+                # Handle list format (TOON may deserialize nested sections as lists)
+                if isinstance(users_data, list):
+                    return {u["id"]: u for u in users_data if isinstance(u, dict) and "id" in u}
+                return users_data if isinstance(users_data, dict) else {}
             except Exception as e:
                 logger.error(f"Failed to load users: {e}")
         return {}

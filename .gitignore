@@ -73,7 +73,5 @@ eval/
 eval/
 
 # Environment volume file
-envfile
-
-# npm modules
-node_modules/
+envfileweb/node_modules/
+web/node_modules/
