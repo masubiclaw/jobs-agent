@@ -8,6 +8,7 @@ google-adk>=1.0.0
 
 # LLM Providers
 ollama>=0.4.0
+litellm>=1.75.5
 
 # Data & Validation
 pydantic>=2.10.6
@@ -38,7 +39,7 @@ reportlab>=4.0.0
 fastapi>=0.109.0
 uvicorn[standard]>=0.27.0
 python-jose[cryptography]>=3.3.0
-passlib[bcrypt]>=1.7.4
+bcrypt>=4.0.0
 python-multipart>=0.0.6
 
 # Development & Testing

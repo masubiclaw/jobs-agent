@@ -56,18 +56,16 @@ Jobs Agent uses JWT (JSON Web Token) authentication with bcrypt password hashing
 
 ## Password Security
 
-Passwords are hashed using bcrypt with automatic salt generation:
+Passwords are hashed using bcrypt with automatic salt generation (see `api/auth/password.py`). Passwords longer than 72 bytes are truncated before hashing, per bcrypt’s limit.
 
 ```python
-from passlib.context import CryptContext
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+from api.auth import hash_password, verify_password
 
 # Hashing
-hashed = pwd_context.hash(password)
+hashed = hash_password(password)
 
 # Verification
-is_valid = pwd_context.verify(password, hashed)
+is_valid = verify_password(password, hashed)
 ```
 
 ## Token Validation
