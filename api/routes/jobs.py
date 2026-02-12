@@ -27,12 +27,13 @@ async def list_jobs(
     location: Optional[str] = None,
     query: Optional[str] = None,
     semantic: bool = False,
+    sort_by: Optional[str] = Query(None, description="Sort by: date, company, title, score"),
     current_user: UserResponse = Depends(get_current_user),
     service: JobService = Depends(get_job_service)
 ) -> JobListResponse:
     """
     List jobs with optional filters.
-    
+
     - **page**: Page number (1-indexed)
     - **page_size**: Number of jobs per page
     - **status**: Filter by job status (active, completed, archived)
@@ -40,6 +41,7 @@ async def list_jobs(
     - **location**: Filter by location
     - **query**: Search in title and description
     - **semantic**: Use AI-powered semantic search
+    - **sort_by**: Sort results by date, company, title, or score
     """
     return service.list_jobs(
         user_id=current_user.id,
@@ -49,7 +51,8 @@ async def list_jobs(
         company=company,
         location=location,
         query=query,
-        semantic=semantic
+        semantic=semantic,
+        sort_by=sort_by,
     )
 
 
@@ -86,11 +89,11 @@ async def create_job(
         user_id=current_user.id,
         job_data=job_data
     )
-    
+
     if not job:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Failed to create job. Please provide valid job details or URL."
+            detail="Failed to create job. Provide title+company, plaintext description, or job_url."
         )
     
     return job

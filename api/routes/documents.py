@@ -89,7 +89,7 @@ async def generate_application_package(
     return result
 
 
-@router.get("/", response_model=List[DocumentListItem])
+@router.get("", response_model=List[DocumentListItem])
 async def list_documents(
     limit: int = Query(100, ge=1, le=500),
     current_user: UserResponse = Depends(get_current_user),

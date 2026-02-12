@@ -127,9 +127,10 @@ class JobService:
         company: Optional[str] = None,
         location: Optional[str] = None,
         query: Optional[str] = None,
-        semantic: bool = False
+        semantic: bool = False,
+        sort_by: Optional[str] = None,
     ) -> JobListResponse:
-        """List jobs with filters and pagination."""
+        """List jobs with filters, sorting, and pagination."""
         # Get all jobs from cache
         if semantic and query:
             all_jobs = self._cache.semantic_search(query, limit=500)
@@ -142,35 +143,47 @@ class JobService:
             )
         else:
             all_jobs = self._cache.list_all(limit=500)
-        
+
         # Load user metadata
         user_meta = self._load_user_job_metadata(user_id)
-        
+
         # Apply status filter
         filtered_jobs = []
         for job in all_jobs:
             job_id = job.get("id", "")
             meta = user_meta.get(job_id, {"status": JobStatus.ACTIVE.value})
-            
+
             if status and meta.get("status") != status.value:
                 continue
-            
+
             filtered_jobs.append((job, meta))
-        
+
+        # Sort
+        if sort_by == "date":
+            filtered_jobs.sort(key=lambda x: x[0].get("cached_at", ""), reverse=True)
+        elif sort_by == "company":
+            filtered_jobs.sort(key=lambda x: x[0].get("company", "").lower())
+        elif sort_by == "title":
+            filtered_jobs.sort(key=lambda x: x[0].get("title", "").lower())
+        elif sort_by == "score":
+            def _score(item):
+                m = self._cache.get_match(item[0].get("id", ""))
+                return m.get("combined_score", 0) if m else 0
+            filtered_jobs.sort(key=_score, reverse=True)
+
         # Pagination
         total = len(filtered_jobs)
         start_idx = (page - 1) * page_size
         end_idx = start_idx + page_size
         page_jobs = filtered_jobs[start_idx:end_idx]
-        
+
         # Convert to response
         jobs = []
         for job, meta in page_jobs:
             job_id = job.get("id", "")
-            # Get match if available
             match = self._cache.get_match(job_id)
             jobs.append(self._job_to_response(job, meta, match))
-        
+
         return JobListResponse(
             jobs=jobs,
             total=total,

@@ -102,7 +102,7 @@ export interface ProfileUpdate {
 }
 
 // Job types
-export type JobStatus = 'active' | 'completed' | 'archived'
+export type JobStatus = 'active' | 'applied' | 'interviewing' | 'offered' | 'rejected' | 'completed' | 'archived'
 export type JobAddMethod = 'manual' | 'url' | 'pdf' | 'scraped' | 'search'
 
 export interface MatchResult {

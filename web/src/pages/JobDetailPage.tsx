@@ -1,21 +1,36 @@
 import { useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { jobsApi, documentsApi } from '../api'
 import { JobStatus } from '../types'
-import { 
-  ArrowLeft, 
-  ExternalLink, 
-  FileText, 
-  Download, 
-  Check, 
+import { DocumentListItem } from '../api/documents'
+import {
+  ArrowLeft,
+  ExternalLink,
+  FileText,
+  Download,
   Archive,
   Trash2,
   MapPin,
   Building,
   DollarSign,
-  Calendar
+  Send,
+  Phone,
+  Award,
+  XCircle,
+  Save,
+  RefreshCw,
 } from 'lucide-react'
+
+const STATUS_CONFIG: Record<JobStatus, { label: string; color: string; icon: React.ReactNode }> = {
+  active: { label: 'Active', color: 'bg-blue-100 text-blue-700', icon: null },
+  applied: { label: 'Applied', color: 'bg-indigo-100 text-indigo-700', icon: <Send size={14} /> },
+  interviewing: { label: 'Interviewing', color: 'bg-amber-100 text-amber-700', icon: <Phone size={14} /> },
+  offered: { label: 'Offered', color: 'bg-emerald-100 text-emerald-700', icon: <Award size={14} /> },
+  rejected: { label: 'Rejected', color: 'bg-red-100 text-red-700', icon: <XCircle size={14} /> },
+  completed: { label: 'Completed', color: 'bg-green-100 text-green-700', icon: null },
+  archived: { label: 'Archived', color: 'bg-gray-100 text-gray-700', icon: <Archive size={14} /> },
+}
 
 export default function JobDetailPage() {
   const { id } = useParams()
@@ -23,6 +38,8 @@ export default function JobDetailPage() {
   const queryClient = useQueryClient()
   const [isGenerating, setIsGenerating] = useState(false)
   const [generationStatus, setGenerationStatus] = useState('')
+  const [editingNotes, setEditingNotes] = useState(false)
+  const [notesValue, setNotesValue] = useState('')
 
   const { data: job, isLoading } = useQuery({
     queryKey: ['job', id],
@@ -30,9 +47,16 @@ export default function JobDetailPage() {
     enabled: !!id,
   })
 
+  // Fetch documents for this job
+  const { data: allDocs = [] } = useQuery({
+    queryKey: ['documents'],
+    queryFn: () => documentsApi.list(),
+  })
+  const jobDocs = allDocs.filter((d: DocumentListItem) => d.job_id === id)
+
   const updateMutation = useMutation({
-    mutationFn: ({ status }: { status: JobStatus }) =>
-      jobsApi.update(id!, { status }),
+    mutationFn: (data: { status?: JobStatus; notes?: string }) =>
+      jobsApi.update(id!, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['job', id] })
       queryClient.invalidateQueries({ queryKey: ['jobs'] })
@@ -47,62 +71,68 @@ export default function JobDetailPage() {
     },
   })
 
-  const handleGenerateResume = async () => {
+  const handleGenerate = async (type: 'resume' | 'cover_letter' | 'package') => {
     if (!id) return
     setIsGenerating(true)
-    setGenerationStatus('Generating resume...')
+    const labels = { resume: 'resume', cover_letter: 'cover letter', package: 'resume + cover letter' }
+    setGenerationStatus(`Generating ${labels[type]}...`)
     try {
-      const doc = await documentsApi.generateResume({ job_id: id })
-      setGenerationStatus(`Resume generated! Score: ${doc.quality_scores.overall_score}%`)
-
-      // Download the PDF
-      try {
-        const blob = await documentsApi.download(doc.id)
-        const url = window.URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = `resume_${job?.company || 'job'}.pdf`
-        a.click()
-        window.URL.revokeObjectURL(url)
-      } catch {
-        // PDF download may fail, but document was still generated
+      if (type === 'package') {
+        await documentsApi.generatePackage({ job_id: id })
+      } else if (type === 'resume') {
+        const doc = await documentsApi.generateResume({ job_id: id })
+        setGenerationStatus(`Resume generated! Score: ${doc.quality_scores.overall_score}%`)
+        try {
+          const blob = await documentsApi.download(doc.id)
+          const url = window.URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = url
+          a.download = `resume_${job?.company || 'job'}.pdf`
+          a.click()
+          window.URL.revokeObjectURL(url)
+        } catch { /* PDF may not exist yet */ }
+        queryClient.invalidateQueries({ queryKey: ['documents'] })
+        return
+      } else {
+        const doc = await documentsApi.generateCoverLetter({ job_id: id })
+        setGenerationStatus(`Cover letter generated! Score: ${doc.quality_scores.overall_score}%`)
+        try {
+          const blob = await documentsApi.download(doc.id)
+          const url = window.URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = url
+          a.download = `cover_letter_${job?.company || 'job'}.pdf`
+          a.click()
+          window.URL.revokeObjectURL(url)
+        } catch { /* PDF may not exist yet */ }
+        queryClient.invalidateQueries({ queryKey: ['documents'] })
+        return
       }
+      setGenerationStatus('Documents generated successfully!')
+      queryClient.invalidateQueries({ queryKey: ['documents'] })
     } catch (err: unknown) {
       const error = err as { response?: { data?: { detail?: string } } }
-      const detail = error?.response?.data?.detail || 'Failed to generate resume. Check that you have an active profile and Ollama is running.'
-      setGenerationStatus(detail)
+      setGenerationStatus(error?.response?.data?.detail || 'Generation failed. Check active profile and Ollama.')
     } finally {
       setIsGenerating(false)
     }
   }
 
-  const handleGenerateCoverLetter = async () => {
-    if (!id) return
-    setIsGenerating(true)
-    setGenerationStatus('Generating cover letter...')
+  const handleDownloadDoc = async (doc: DocumentListItem) => {
     try {
-      const doc = await documentsApi.generateCoverLetter({ job_id: id })
-      setGenerationStatus(`Cover letter generated! Score: ${doc.quality_scores.overall_score}%`)
+      const blob = await documentsApi.download(doc.id)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${doc.job_company}_${doc.document_type}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch { /* ignore */ }
+  }
 
-      // Download the PDF
-      try {
-        const blob = await documentsApi.download(doc.id)
-        const url = window.URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = `cover_letter_${job?.company || 'job'}.pdf`
-        a.click()
-        window.URL.revokeObjectURL(url)
-      } catch {
-        // PDF download may fail, but document was still generated
-      }
-    } catch (err: unknown) {
-      const error = err as { response?: { data?: { detail?: string } } }
-      const detail = error?.response?.data?.detail || 'Failed to generate cover letter. Check that you have an active profile and Ollama is running.'
-      setGenerationStatus(detail)
-    } finally {
-      setIsGenerating(false)
-    }
+  const handleSaveNotes = () => {
+    updateMutation.mutate({ notes: notesValue })
+    setEditingNotes(false)
   }
 
   if (isLoading) {
@@ -179,77 +209,149 @@ export default function JobDetailPage() {
         )}
       </div>
 
-      {/* Status and Actions */}
+      {/* Application Status Tracker */}
       <div className="card">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <span className="text-sm text-gray-500">Status:</span>
-            <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-              job.status === 'active'
-                ? 'bg-blue-100 text-blue-700'
-                : job.status === 'completed'
-                ? 'bg-green-100 text-green-700'
-                : 'bg-gray-100 text-gray-700'
-            }`}>
-              {job.status}
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            {job.status !== 'completed' && (
-              <button
-                onClick={() => updateMutation.mutate({ status: 'completed' })}
-                className="btn btn-secondary flex items-center gap-2"
-              >
-                <Check size={16} />
-                Mark Completed
-              </button>
-            )}
-            {job.status !== 'archived' && (
-              <button
-                onClick={() => updateMutation.mutate({ status: 'archived' })}
-                className="btn btn-secondary flex items-center gap-2"
-              >
-                <Archive size={16} />
-                Archive
-              </button>
-            )}
+        <h2 className="text-lg font-semibold mb-3">Application Status</h2>
+        <div className="flex flex-wrap items-center gap-2">
+          {(Object.entries(STATUS_CONFIG) as [JobStatus, typeof STATUS_CONFIG[JobStatus]][]).map(([key, cfg]) => (
             <button
-              onClick={() => {
-                if (confirm('Are you sure you want to delete this job?')) {
-                  deleteMutation.mutate()
-                }
-              }}
-              className="btn btn-danger flex items-center gap-2"
+              key={key}
+              onClick={() => updateMutation.mutate({ status: key })}
+              disabled={updateMutation.isPending}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-all ${
+                job.status === key
+                  ? `${cfg.color} ring-2 ring-offset-1 ring-current`
+                  : 'bg-gray-50 text-gray-400 hover:bg-gray-100 hover:text-gray-600'
+              }`}
             >
-              <Trash2 size={16} />
+              {cfg.icon}
+              {cfg.label}
             </button>
+          ))}
+        </div>
+
+        {/* Notes */}
+        <div className="mt-4 pt-4 border-t border-gray-100">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium text-gray-700">Notes</span>
+            {!editingNotes && (
+              <button
+                onClick={() => { setNotesValue(job.notes || ''); setEditingNotes(true) }}
+                className="text-xs text-primary-600 hover:text-primary-700"
+              >
+                Edit
+              </button>
+            )}
           </div>
+          {editingNotes ? (
+            <div className="space-y-2">
+              <textarea
+                value={notesValue}
+                onChange={(e) => setNotesValue(e.target.value)}
+                rows={3}
+                className="input w-full"
+                placeholder="Add notes about this application..."
+              />
+              <div className="flex gap-2">
+                <button onClick={handleSaveNotes} className="btn btn-primary btn-sm flex items-center gap-1">
+                  <Save size={14} />
+                  Save
+                </button>
+                <button onClick={() => setEditingNotes(false)} className="btn btn-secondary btn-sm">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500 italic">
+              {job.notes || 'No notes yet. Click Edit to add.'}
+            </p>
+          )}
         </div>
       </div>
 
       {/* Document Generation */}
       <div className="card">
         <h2 className="text-lg font-semibold mb-4">Generate Documents</h2>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
           <button
-            onClick={handleGenerateResume}
+            onClick={() => handleGenerate('package')}
             disabled={isGenerating}
             className="btn btn-primary flex items-center gap-2"
           >
             <FileText size={18} />
-            Generate Resume
+            {isGenerating ? 'Generating...' : 'Resume + Cover Letter'}
           </button>
           <button
-            onClick={handleGenerateCoverLetter}
+            onClick={() => handleGenerate('resume')}
             disabled={isGenerating}
             className="btn btn-secondary flex items-center gap-2"
           >
-            <FileText size={18} />
-            Generate Cover Letter
+            Resume Only
+          </button>
+          <button
+            onClick={() => handleGenerate('cover_letter')}
+            disabled={isGenerating}
+            className="btn btn-secondary flex items-center gap-2"
+          >
+            Cover Letter Only
           </button>
         </div>
         {generationStatus && (
-          <p className="mt-4 text-sm text-gray-600">{generationStatus}</p>
+          <p className={`mt-3 text-sm ${
+            generationStatus.includes('failed') || generationStatus.includes('Failed')
+              ? 'text-red-600' : 'text-gray-600'
+          }`}>
+            {generationStatus}
+          </p>
+        )}
+
+        {/* Existing documents for this job */}
+        {jobDocs.length > 0 && (
+          <div className="mt-4 pt-4 border-t border-gray-100">
+            <h3 className="text-sm font-medium text-gray-700 mb-2">
+              Generated Documents ({jobDocs.length})
+            </h3>
+            <div className="space-y-2">
+              {jobDocs.map((doc: DocumentListItem) => (
+                <div key={doc.id} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <FileText size={16} className={doc.document_type === 'resume' ? 'text-blue-500' : 'text-purple-500'} />
+                    <span className="text-sm font-medium">
+                      {doc.document_type === 'resume' ? 'Resume' : 'Cover Letter'}
+                    </span>
+                    {doc.overall_score > 0 && (
+                      <span className="text-xs bg-gray-200 px-1.5 py-0.5 rounded">
+                        {doc.overall_score.toFixed(0)}%
+                      </span>
+                    )}
+                    <span className="text-xs text-gray-400">
+                      {new Date(doc.created_at).toLocaleDateString()}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => handleGenerate(doc.document_type === 'resume' ? 'resume' : 'cover_letter')}
+                      disabled={isGenerating}
+                      className="p-1.5 text-gray-400 hover:text-primary-600 rounded"
+                      title="Regenerate"
+                    >
+                      <RefreshCw size={14} />
+                    </button>
+                    {doc.pdf_path && (
+                      <button
+                        onClick={() => handleDownloadDoc(doc)}
+                        className="p-1.5 text-gray-400 hover:text-primary-600 rounded"
+                        title="Download PDF"
+                      >
+                        <Download size={14} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
       </div>
 
@@ -280,7 +382,7 @@ export default function JobDetailPage() {
             </div>
           </div>
           <p className="text-sm text-gray-500">
-            Match Level: <span className="font-medium">{job.match.match_level}</span>
+            Match Level: <span className="font-medium capitalize">{job.match.match_level}</span>
           </p>
         </div>
       )}
@@ -288,14 +390,12 @@ export default function JobDetailPage() {
       {/* Description */}
       <div className="card">
         <h2 className="text-lg font-semibold mb-4">Job Description</h2>
-        <div className="prose prose-sm max-w-none">
-          <pre className="whitespace-pre-wrap font-sans text-gray-700">
-            {job.description || 'No description available'}
-          </pre>
+        <div className="prose prose-sm max-w-none text-gray-700 whitespace-pre-wrap">
+          {job.description || 'No description available'}
         </div>
       </div>
 
-      {/* Metadata */}
+      {/* Metadata + Danger Zone */}
       <div className="card">
         <h2 className="text-lg font-semibold mb-4">Details</h2>
         <dl className="grid grid-cols-2 gap-4 text-sm">
@@ -318,6 +418,19 @@ export default function JobDetailPage() {
             </dd>
           </div>
         </dl>
+        <div className="mt-4 pt-4 border-t border-gray-100 flex justify-end">
+          <button
+            onClick={() => {
+              if (confirm('Are you sure you want to delete this job?')) {
+                deleteMutation.mutate()
+              }
+            }}
+            className="btn btn-danger flex items-center gap-2"
+          >
+            <Trash2 size={16} />
+            Delete Job
+          </button>
+        </div>
       </div>
     </div>
   )

@@ -15,6 +15,8 @@ import {
   Plus,
   CheckCircle,
   AlertCircle,
+  RefreshCw,
+  Trash2,
 } from 'lucide-react'
 
 type FilterType = 'all' | 'resume' | 'cover_letter'
@@ -28,6 +30,7 @@ export default function DocumentsPage() {
   const [selectedJobId, setSelectedJobId] = useState('')
   const [genType, setGenType] = useState<GenType>('package')
   const [genMessage, setGenMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [selectedDocs, setSelectedDocs] = useState<Set<string>>(new Set())
 
   const { data: documents = [], isLoading } = useQuery({
     queryKey: ['documents'],
@@ -37,7 +40,6 @@ export default function DocumentsPage() {
   const { data: topJobs = [] } = useQuery({
     queryKey: ['top-jobs-for-gen'],
     queryFn: async () => {
-      // Try top-matched jobs first, fall back to all jobs
       const top = await jobsApi.getTop(50, 0)
       if (top.length > 0) return top
       const all = await jobsApi.list({ page_size: 100 })
@@ -58,11 +60,11 @@ export default function DocumentsPage() {
     onSuccess: () => {
       setGenMessage({ type: 'success', text: 'Documents generated successfully!' })
       queryClient.invalidateQueries({ queryKey: ['documents'] })
-      setTimeout(() => setGenMessage(null), 5000)
+      setTimeout(() => setGenMessage(null), 8000)
     },
     onError: () => {
-      setGenMessage({ type: 'error', text: 'Failed to generate documents. Check that you have an active profile.' })
-      setTimeout(() => setGenMessage(null), 5000)
+      setGenMessage({ type: 'error', text: 'Failed to generate documents. Check that you have an active profile and Ollama is running.' })
+      setTimeout(() => setGenMessage(null), 8000)
     },
   })
 
@@ -83,6 +85,31 @@ export default function DocumentsPage() {
       URL.revokeObjectURL(url)
     } catch {
       // PDF may not exist
+    }
+  }
+
+  const handleBulkReview = async () => {
+    for (const docId of selectedDocs) {
+      await documentsApi.updateReview(docId, true)
+    }
+    setSelectedDocs(new Set())
+    queryClient.invalidateQueries({ queryKey: ['documents'] })
+  }
+
+  const toggleSelect = (docId: string) => {
+    setSelectedDocs(prev => {
+      const next = new Set(prev)
+      if (next.has(docId)) next.delete(docId)
+      else next.add(docId)
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    if (selectedDocs.size === filtered.length) {
+      setSelectedDocs(new Set())
+    } else {
+      setSelectedDocs(new Set(filtered.map(d => d.id)))
     }
   }
 
@@ -164,30 +191,52 @@ export default function DocumentsPage() {
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="flex items-center gap-4">
-        <div className="flex items-center gap-2">
-          <Filter size={16} className="text-gray-400" />
+      {/* Filters + Bulk Actions */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <Filter size={16} className="text-gray-400" />
+            <select
+              value={typeFilter}
+              onChange={(e) => setTypeFilter(e.target.value as FilterType)}
+              className="input py-1.5 text-sm"
+            >
+              <option value="all">All Types</option>
+              <option value="resume">Resumes</option>
+              <option value="cover_letter">Cover Letters</option>
+            </select>
+          </div>
           <select
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value as FilterType)}
+            value={reviewFilter}
+            onChange={(e) => setReviewFilter(e.target.value as ReviewFilter)}
             className="input py-1.5 text-sm"
           >
-            <option value="all">All Types</option>
-            <option value="resume">Resumes</option>
-            <option value="cover_letter">Cover Letters</option>
+            <option value="all">All Status</option>
+            <option value="reviewed">Reviewed</option>
+            <option value="unreviewed">Unreviewed</option>
           </select>
+          <span className="text-sm text-gray-500">{filtered.length} documents</span>
         </div>
-        <select
-          value={reviewFilter}
-          onChange={(e) => setReviewFilter(e.target.value as ReviewFilter)}
-          className="input py-1.5 text-sm"
-        >
-          <option value="all">All Status</option>
-          <option value="reviewed">Reviewed</option>
-          <option value="unreviewed">Unreviewed</option>
-        </select>
-        <span className="text-sm text-gray-500">{filtered.length} documents</span>
+
+        {/* Bulk actions */}
+        {selectedDocs.size > 0 && (
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-500">{selectedDocs.size} selected</span>
+            <button
+              onClick={handleBulkReview}
+              className="btn btn-secondary btn-sm flex items-center gap-1"
+            >
+              <CheckSquare size={14} />
+              Mark Reviewed
+            </button>
+            <button
+              onClick={() => setSelectedDocs(new Set())}
+              className="text-sm text-gray-400 hover:text-gray-600"
+            >
+              Clear
+            </button>
+          </div>
+        )}
       </div>
 
       {isLoading ? (
@@ -202,14 +251,35 @@ export default function DocumentsPage() {
           </h3>
           <p className="text-gray-500">
             {documents.length === 0
-              ? 'Generate documents from job detail pages or run the pipeline.'
+              ? 'Select a job above and click Generate, or use the pipeline.'
               : 'Try changing your filters.'}
           </p>
         </div>
       ) : (
         <div className="space-y-3">
+          {/* Select all */}
+          {filtered.length > 1 && (
+            <button
+              onClick={toggleSelectAll}
+              className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1"
+            >
+              {selectedDocs.size === filtered.length ? <CheckSquare size={14} /> : <Square size={14} />}
+              {selectedDocs.size === filtered.length ? 'Deselect all' : 'Select all'}
+            </button>
+          )}
+
           {filtered.map((doc) => (
-            <div key={doc.id} className="card flex items-center gap-4">
+            <div key={doc.id} className={`card flex items-center gap-4 ${
+              selectedDocs.has(doc.id) ? 'ring-2 ring-primary-200' : ''
+            }`}>
+              {/* Checkbox */}
+              <button
+                onClick={() => toggleSelect(doc.id)}
+                className="text-gray-300 hover:text-gray-500"
+              >
+                {selectedDocs.has(doc.id) ? <CheckSquare size={18} className="text-primary-600" /> : <Square size={18} />}
+              </button>
+
               {/* Type badge */}
               <div
                 className={`p-2.5 rounded-lg ${
@@ -250,7 +320,6 @@ export default function DocumentsPage() {
 
               {/* Actions */}
               <div className="flex items-center gap-2">
-                {/* Job URL link */}
                 {doc.job_url && (
                   <a
                     href={doc.job_url}
@@ -263,7 +332,6 @@ export default function DocumentsPage() {
                   </a>
                 )}
 
-                {/* Reviewed toggle */}
                 <button
                   onClick={() =>
                     reviewMutation.mutate({ docId: doc.id, reviewed: !doc.reviewed })
@@ -278,7 +346,6 @@ export default function DocumentsPage() {
                   {doc.reviewed ? <CheckSquare size={18} /> : <Square size={18} />}
                 </button>
 
-                {/* Good/Not Good toggles */}
                 <button
                   onClick={() =>
                     reviewMutation.mutate({
@@ -312,7 +379,6 @@ export default function DocumentsPage() {
                   <ThumbsDown size={16} />
                 </button>
 
-                {/* Download */}
                 {doc.pdf_path && (
                   <button
                     onClick={() => handleDownload(doc)}

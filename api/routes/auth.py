@@ -1,9 +1,9 @@
 """Authentication routes for user registration and login."""
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Depends
 
-from api.models import UserCreate, UserLogin, UserResponse, Token
-from api.auth import create_access_token, get_user_store
+from api.models import UserCreate, UserLogin, UserResponse, Token, PasswordChange
+from api.auth import create_access_token, get_user_store, get_current_user
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -68,9 +68,30 @@ async def login(credentials: UserLogin) -> Token:
     access_token = create_access_token(
         data={"sub": user["id"], "email": user["email"], "is_admin": user.get("is_admin", False)}
     )
-    
-    return Token(access_token=access_token)
 
+    from api.auth.jwt import ACCESS_TOKEN_EXPIRE_HOURS
+    return Token(access_token=access_token, expires_in=ACCESS_TOKEN_EXPIRE_HOURS * 3600)
+
+
+
+@router.post("/change-password", status_code=status.HTTP_200_OK)
+async def change_password(
+    data: PasswordChange,
+    current_user: UserResponse = Depends(get_current_user),
+) -> dict:
+    """Change the current user's password."""
+    user_store = get_user_store()
+
+    # Verify current password
+    authed = user_store.authenticate(current_user.email, data.current_password)
+    if not authed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect"
+        )
+
+    user_store.update(current_user.id, password=data.new_password)
+    return {"status": "ok", "message": "Password changed successfully"}
 
 
 # /auth/me endpoint is implemented in main.py with proper Depends(get_current_user)

@@ -242,11 +242,18 @@ class AdminService:
     def list_users(self) -> Dict[str, Any]:
         """List all users."""
         from api.auth import get_user_store
-        
+
         user_store = get_user_store()
         users = user_store.list_users()
-        
+
         return {
             "users": users,
             "total": len(users)
         }
+
+    def delete_user(self, user_id: str) -> bool:
+        """Delete a user by ID."""
+        from api.auth import get_user_store
+
+        user_store = get_user_store()
+        return user_store.delete(user_id)
