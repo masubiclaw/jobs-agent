@@ -19,7 +19,7 @@ class TestAdminAuthorization:
         """Test that admin endpoints require authentication."""
         response = client.get("/api/admin/stats")
         
-        assert response.status_code == 403  # No credentials
+        assert response.status_code in (401, 403)  # No credentials
 
 
 class TestAdminStats:

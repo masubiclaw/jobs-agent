@@ -177,7 +177,7 @@ class JobListResponse(BaseModel):
     total: int
     page: int
     page_size: int
-    total_pages: int
+    has_more: bool = False
 
 
 # ── Document Models ──────────────────────────────────────────
@@ -242,6 +242,10 @@ class PipelineRunRequest(BaseModel):
 class PipelineSchedulerUpdate(BaseModel):
     enabled: bool
     interval_hours: float = 24.0
+
+
+class LinkedInImportRequest(BaseModel):
+    url: str
 
 
 class PipelineStatus(BaseModel):

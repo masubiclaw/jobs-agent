@@ -196,7 +196,7 @@ async def run_pipeline(
         )
 
     import asyncio
-    asyncio.ensure_future(service.run_pipeline_now(request.steps))
+    asyncio.ensure_future(service.run_pipeline_now(request.steps, user_id=current_user.id))
 
     return {
         "status": "started",
@@ -212,7 +212,7 @@ async def update_scheduler(
     """Enable/disable pipeline scheduler and set interval."""
     service = get_pipeline_service()
     if update.enabled:
-        service.start_scheduler(update.interval_hours)
+        service.start_scheduler(update.interval_hours, user_id=current_user.id)
         return {
             "status": "enabled",
             "message": f"Scheduler enabled with {update.interval_hours}h interval"

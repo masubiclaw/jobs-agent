@@ -113,7 +113,7 @@ COMMANDS
 
 📊 MATCH AGGREGATION:
   "summarize my matches" → aggregate_job_matches()
-  "best matches" → aggregate_job_matches(min_score=70)
+  "best matches" → aggregate_job_matches(min_score=60)
   "list all matches" → list_cached_matches()
   "top 10 matches" → aggregate_job_matches(max_results=10)
 

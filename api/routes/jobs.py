@@ -110,6 +110,11 @@ async def upload_job_pdf(
         )
     
     contents = await file.read()
+    if len(contents) > 10 * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="File too large. Maximum size is 10MB."
+        )
     job = service.create_job_from_pdf(
         user_id=current_user.id,
         pdf_content=contents,

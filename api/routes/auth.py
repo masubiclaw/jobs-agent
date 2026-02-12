@@ -72,25 +72,5 @@ async def login(credentials: UserLogin) -> Token:
     return Token(access_token=access_token)
 
 
-@router.get("/me", response_model=UserResponse)
-async def get_current_user_info(
-    current_user: UserResponse = None
-) -> UserResponse:
-    """
-    Get current authenticated user's information.
-    
-    Note: This endpoint requires authentication via the get_current_user dependency.
-    """
-    # Import here to get dependency
-    from api.auth import get_current_user
-    from fastapi import Depends
-    
-    # This will be handled by the dependency injection in main.py
-    # For now, return a placeholder that will be overridden
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Not authenticated"
-    )
 
-
-# We'll create a proper /me endpoint in main.py with the dependency
+# /auth/me endpoint is implemented in main.py with proper Depends(get_current_user)

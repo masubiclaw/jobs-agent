@@ -94,21 +94,21 @@ export default function AdminDashboard() {
             className="flex items-center gap-3 p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
           >
             <RefreshCw size={20} className="text-blue-600" />
-            <span>Run Scraper</span>
+            <span>System Operations</span>
           </Link>
           <Link
-            to="/admin/scraper"
+            to="/admin/pipeline"
             className="flex items-center gap-3 p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
           >
             <Search size={20} className="text-green-600" />
-            <span>Run Searcher</span>
+            <span>Pipeline Dashboard</span>
           </Link>
           <Link
-            to="/admin/scraper"
+            to="/admin/jobs"
             className="flex items-center gap-3 p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
           >
             <RefreshCw size={20} className="text-purple-600" />
-            <span>Run Matcher</span>
+            <span>Manage Jobs</span>
           </Link>
           <Link
             to="/admin/scraper"

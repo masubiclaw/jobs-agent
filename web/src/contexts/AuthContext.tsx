@@ -30,9 +30,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const userData = await authApi.getMe()
       setUser(userData)
-    } catch (error) {
-      // Token invalid, clear it
-      localStorage.removeItem('auth_token')
+    } catch (error: any) {
+      // Only clear token on 401 (invalid token), not on network errors
+      if (error?.response?.status === 401) {
+        localStorage.removeItem('auth_token')
+      }
     } finally {
       setIsLoading(false)
     }

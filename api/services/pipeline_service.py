@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from job_agent_coordinator.tools.toon_format import to_toon, from_toon
 from job_agent_coordinator.tools.job_cache import get_cache
 from job_agent_coordinator.tools.profile_store import get_store
+from api.services.profile_service import ProfileService
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,7 @@ class PipelineService:
 
         self._history_file = Path(".job_cache/pipeline_runs.toon")
         self._history_file.parent.mkdir(parents=True, exist_ok=True)
+        self._user_id: Optional[str] = None
 
     def _load_history(self) -> List[Dict[str, Any]]:
         if self._history_file.exists():
@@ -125,9 +127,11 @@ class PipelineService:
             "total_docs_generated": sum(r.get("docs_generated", 0) for r in runs),
         }
 
-    def start_scheduler(self, interval_hours: float):
+    def start_scheduler(self, interval_hours: float, user_id: Optional[str] = None):
         self._scheduler_enabled = True
         self._interval_hours = interval_hours
+        if user_id:
+            self._user_id = user_id
         self._next_run = datetime.now() + timedelta(hours=interval_hours)
         self._add_log("INFO", f"Scheduler started with {interval_hours}h interval")
 
@@ -164,10 +168,34 @@ class PipelineService:
         except Exception as e:
             self._add_log("ERROR", f"Scheduler error: {e}")
 
-    async def run_pipeline_now(self, steps: List[str]):
+    def _get_user_search_context(self) -> Dict[str, Any]:
+        """Get search context from user's API profile, falling back to global store."""
+        if self._user_id:
+            try:
+                profile_service = ProfileService()
+                profile = profile_service.get_active_profile(self._user_id)
+                if profile:
+                    prefs = profile.preferences
+                    return {
+                        "name": profile.name,
+                        "location": profile.location,
+                        "skills": [s.name for s in profile.skills],
+                        "target_roles": prefs.target_roles if prefs else [],
+                        "target_locations": prefs.target_locations if prefs else [],
+                        "remote_preference": prefs.remote_preference if prefs else None,
+                        "excluded_companies": prefs.excluded_companies if prefs else [],
+                    }
+            except Exception as e:
+                self._add_log("WARNING", f"Failed to load user profile: {e}")
+
+        # Fall back to global store
+        return get_store().get_search_context()
+
+    async def run_pipeline_now(self, steps: List[str], user_id: Optional[str] = None):
         if self._is_running:
             self._add_log("WARNING", "Pipeline already running, skipping")
             return
+        self._user_id = user_id
         await self._execute_pipeline(steps)
 
     async def _execute_pipeline(self, steps: List[str]):
@@ -260,26 +288,71 @@ class PipelineService:
                 self._add_log("WARNING", "JobSpy not available, skipping search")
                 return 0
 
-            context = get_store().get_search_context()
+            context = self._get_user_search_context()
             exclusions = context.get("excluded_companies", [])
-            search_term = context.get("search_term", "software engineering manager")
-            location = context.get("location", "seattle")
 
-            result = await asyncio.to_thread(
-                search_jobs_with_jobspy,
-                search_term=search_term,
-                location=location,
-                results_wanted=25,
-                hours_old=72,
-                sites="indeed,linkedin",
-                exclude_companies=",".join(exclusions) if exclusions else "",
-            )
+            # Build search terms from profile target_roles, fall back to defaults
+            target_roles = context.get("target_roles", [])
+            location = context.get("location") or "seattle"
+            target_locations = context.get("target_locations", [])
 
-            if result.get("success"):
-                return len(result.get("jobs", []))
+            # Use profile roles or expand with common variants
+            if target_roles:
+                search_terms = target_roles
             else:
-                self._add_log("WARNING", f"Search failed: {result.get('error', 'unknown')}")
-                return 0
+                search_terms = [
+                    "software engineer",
+                    "senior software engineer",
+                    "full stack developer",
+                ]
+
+            # Use profile locations or expand with common tech hubs
+            if target_locations:
+                search_locations = list(dict.fromkeys(
+                    [location] + target_locations
+                ))
+            else:
+                search_locations = list(dict.fromkeys([
+                    location,
+                    "remote",
+                ]))
+
+            total_found = 0
+            for term in search_terms:
+                for loc in search_locations:
+                    self._add_log("INFO", f"Searching: '{term}' in '{loc}'")
+                    result = await asyncio.to_thread(
+                        search_jobs_with_jobspy,
+                        search_term=term,
+                        location=loc,
+                        results_wanted=100,
+                        hours_old=168,
+                        sites="indeed,linkedin,glassdoor,zip_recruiter",
+                        exclude_companies=",".join(exclusions) if exclusions else "",
+                    )
+
+                    if result.get("success"):
+                        found = len(result.get("jobs", []))
+                        total_found += found
+                        self._add_log("INFO", f"Found {found} jobs for '{term}' in '{loc}'")
+                    else:
+                        self._add_log("WARNING", f"Search failed for '{term}' in '{loc}': {result.get('error', 'unknown')}")
+                        # Retry with fewer sites on failure
+                        result = await asyncio.to_thread(
+                            search_jobs_with_jobspy,
+                            search_term=term,
+                            location=loc,
+                            results_wanted=50,
+                            hours_old=336,
+                            sites="indeed,zip_recruiter",
+                            exclude_companies=",".join(exclusions) if exclusions else "",
+                        )
+                        if result.get("success"):
+                            found = len(result.get("jobs", []))
+                            total_found += found
+                            self._add_log("INFO", f"Retry found {found} jobs for '{term}' in '{loc}'")
+
+            return total_found
 
         except Exception as e:
             self._add_log("ERROR", f"Search error: {e}")
@@ -375,7 +448,7 @@ class PipelineService:
         try:
             from job_agent_coordinator.tools.resume_tools import generate_application_package
 
-            matches = cache.list_matches(min_score=70, limit=100)
+            matches = cache.list_matches(min_score=60, limit=100)
             generated = 0
 
             for match in matches[:10]:

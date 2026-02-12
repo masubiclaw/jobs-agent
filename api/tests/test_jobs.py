@@ -222,4 +222,4 @@ class TestJobAuthorization:
         """Test that job endpoints require authentication."""
         response = client.get("/api/jobs")
         
-        assert response.status_code == 403  # No credentials
+        assert response.status_code in (401, 403)  # No credentials

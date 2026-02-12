@@ -54,17 +54,23 @@ export default function JobDetailPage() {
     try {
       const doc = await documentsApi.generateResume({ job_id: id })
       setGenerationStatus(`Resume generated! Score: ${doc.quality_scores.overall_score}%`)
-      
+
       // Download the PDF
-      const blob = await documentsApi.download(doc.id)
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `resume_${job?.company || 'job'}.pdf`
-      a.click()
-      window.URL.revokeObjectURL(url)
-    } catch (error) {
-      setGenerationStatus('Failed to generate resume')
+      try {
+        const blob = await documentsApi.download(doc.id)
+        const url = window.URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `resume_${job?.company || 'job'}.pdf`
+        a.click()
+        window.URL.revokeObjectURL(url)
+      } catch {
+        // PDF download may fail, but document was still generated
+      }
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { detail?: string } } }
+      const detail = error?.response?.data?.detail || 'Failed to generate resume. Check that you have an active profile and Ollama is running.'
+      setGenerationStatus(detail)
     } finally {
       setIsGenerating(false)
     }
@@ -77,17 +83,23 @@ export default function JobDetailPage() {
     try {
       const doc = await documentsApi.generateCoverLetter({ job_id: id })
       setGenerationStatus(`Cover letter generated! Score: ${doc.quality_scores.overall_score}%`)
-      
+
       // Download the PDF
-      const blob = await documentsApi.download(doc.id)
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `cover_letter_${job?.company || 'job'}.pdf`
-      a.click()
-      window.URL.revokeObjectURL(url)
-    } catch (error) {
-      setGenerationStatus('Failed to generate cover letter')
+      try {
+        const blob = await documentsApi.download(doc.id)
+        const url = window.URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `cover_letter_${job?.company || 'job'}.pdf`
+        a.click()
+        window.URL.revokeObjectURL(url)
+      } catch {
+        // PDF download may fail, but document was still generated
+      }
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { detail?: string } } }
+      const detail = error?.response?.data?.detail || 'Failed to generate cover letter. Check that you have an active profile and Ollama is running.'
+      setGenerationStatus(detail)
     } finally {
       setIsGenerating(false)
     }

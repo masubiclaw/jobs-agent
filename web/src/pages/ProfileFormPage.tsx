@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { profilesApi } from '../api'
 import { Profile, ProfileUpdate, Skill, Experience, Preferences } from '../types'
-import { ArrowLeft, Plus, Trash2, Save } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, Save, CheckCircle, AlertCircle } from 'lucide-react'
 
 export default function ProfileFormPage() {
   const { id } = useParams()
@@ -29,6 +29,7 @@ export default function ProfileFormPage() {
   const [newSkill, setNewSkill] = useState({ name: '', level: 'intermediate' as const })
 
   const [experience, setExperience] = useState<Experience[]>([])
+  const [newExp, setNewExp] = useState({ title: '', company: '', start_date: '', end_date: '', description: '' })
 
   const [preferences, setPreferences] = useState<Preferences>({
     target_roles: [],
@@ -40,6 +41,20 @@ export default function ProfileFormPage() {
     industries: [],
     excluded_companies: [],
   })
+
+  // Raw string state for comma-separated fields (split on blur, not on every keystroke)
+  const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+
+  const showSaveMessage = (type: 'success' | 'error', text: string) => {
+    setSaveMessage({ type, text })
+    setTimeout(() => setSaveMessage(null), 5000)
+  }
+
+  const [rawTargetRoles, setRawTargetRoles] = useState('')
+  const [rawTargetLocations, setRawTargetLocations] = useState('')
+  const [rawExcludedCompanies, setRawExcludedCompanies] = useState('')
+
+  const splitCsv = (val: string) => val.split(',').map(s => s.trim()).filter(Boolean)
 
   useEffect(() => {
     if (profile) {
@@ -53,6 +68,9 @@ export default function ProfileFormPage() {
       setSkills(profile.skills)
       setExperience(profile.experience)
       setPreferences(profile.preferences)
+      setRawTargetRoles(profile.preferences.target_roles.join(', '))
+      setRawTargetLocations(profile.preferences.target_locations.join(', '))
+      setRawExcludedCompanies(profile.preferences.excluded_companies.join(', '))
     }
   }, [profile])
 
@@ -62,6 +80,9 @@ export default function ProfileFormPage() {
       queryClient.invalidateQueries({ queryKey: ['profiles'] })
       navigate(`/profiles/${data.id}`)
     },
+    onError: (err: any) => {
+      showSaveMessage('error', err?.response?.data?.detail || 'Failed to create profile')
+    },
   })
 
   const updateMutation = useMutation({
@@ -70,11 +91,22 @@ export default function ProfileFormPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['profiles'] })
       queryClient.invalidateQueries({ queryKey: ['profile', id] })
+      showSaveMessage('success', 'Profile saved successfully')
+    },
+    onError: (err: any) => {
+      showSaveMessage('error', err?.response?.data?.detail || 'Failed to save profile')
     },
   })
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+
+    const finalPreferences = {
+      ...preferences,
+      target_roles: splitCsv(rawTargetRoles),
+      target_locations: splitCsv(rawTargetLocations),
+      excluded_companies: splitCsv(rawExcludedCompanies),
+    }
 
     if (isEditing) {
       updateMutation.mutate({
@@ -83,7 +115,7 @@ export default function ProfileFormPage() {
           ...formData,
           skills,
           experience,
-          preferences,
+          preferences: finalPreferences,
         },
       })
     } else {
@@ -100,6 +132,17 @@ export default function ProfileFormPage() {
 
   const removeSkill = (index: number) => {
     setSkills(skills.filter((_, i) => i !== index))
+  }
+
+  const addExperience = () => {
+    if (newExp.title.trim() && newExp.company.trim()) {
+      setExperience([...experience, { ...newExp, added_at: new Date().toISOString() }])
+      setNewExp({ title: '', company: '', start_date: '', end_date: '', description: '' })
+    }
+  }
+
+  const removeExperience = (index: number) => {
+    setExperience(experience.filter((_, i) => i !== index))
   }
 
   if (isLoading) {
@@ -130,6 +173,19 @@ export default function ProfileFormPage() {
           </p>
         </div>
       </div>
+
+      {saveMessage && (
+        <div
+          className={`p-3 rounded-lg flex items-center gap-2 ${
+            saveMessage.type === 'success'
+              ? 'bg-green-50 text-green-700 border border-green-200'
+              : 'bg-red-50 text-red-700 border border-red-200'
+          }`}
+        >
+          {saveMessage.type === 'success' ? <CheckCircle size={20} /> : <AlertCircle size={20} />}
+          <span className="text-sm">{saveMessage.text}</span>
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
         {/* Basic Info */}
@@ -238,6 +294,76 @@ export default function ProfileFormPage() {
           </div>
         )}
 
+        {/* Experience */}
+        {isEditing && (
+          <div className="card space-y-4">
+            <h2 className="text-lg font-semibold">Experience</h2>
+
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  type="text"
+                  value={newExp.title}
+                  onChange={(e) => setNewExp({ ...newExp, title: e.target.value })}
+                  className="input"
+                  placeholder="Job Title"
+                />
+                <input
+                  type="text"
+                  value={newExp.company}
+                  onChange={(e) => setNewExp({ ...newExp, company: e.target.value })}
+                  className="input"
+                  placeholder="Company"
+                />
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <input
+                  type="text"
+                  value={newExp.start_date}
+                  onChange={(e) => setNewExp({ ...newExp, start_date: e.target.value })}
+                  className="input"
+                  placeholder="Start (e.g. 2020-01)"
+                />
+                <input
+                  type="text"
+                  value={newExp.end_date}
+                  onChange={(e) => setNewExp({ ...newExp, end_date: e.target.value })}
+                  className="input"
+                  placeholder="End (or present)"
+                />
+                <button type="button" onClick={addExperience} className="btn btn-secondary flex items-center gap-1">
+                  <Plus size={16} /> Add
+                </button>
+              </div>
+              <textarea
+                value={newExp.description}
+                onChange={(e) => setNewExp({ ...newExp, description: e.target.value })}
+                className="input"
+                rows={2}
+                placeholder="Description (optional)"
+              />
+            </div>
+
+            {experience.length > 0 && (
+              <div className="space-y-2">
+                {experience.map((exp, index) => (
+                  <div key={index} className="flex items-start justify-between p-3 bg-gray-50 rounded-lg">
+                    <div>
+                      <div className="font-medium">{exp.title}</div>
+                      <div className="text-sm text-gray-600">{exp.company}</div>
+                      <div className="text-xs text-gray-400">{exp.start_date} — {exp.end_date || 'present'}</div>
+                      {exp.description && <div className="text-sm text-gray-500 mt-1">{exp.description}</div>}
+                    </div>
+                    <button type="button" onClick={() => removeExperience(index)} className="text-gray-400 hover:text-red-500 ml-2">
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Preferences */}
         {isEditing && (
           <div className="card space-y-4">
@@ -248,13 +374,9 @@ export default function ProfileFormPage() {
                 <label className="label">Target Roles (comma-separated)</label>
                 <input
                   type="text"
-                  value={preferences.target_roles.join(', ')}
-                  onChange={(e) =>
-                    setPreferences({
-                      ...preferences,
-                      target_roles: e.target.value.split(',').map((s) => s.trim()).filter(Boolean),
-                    })
-                  }
+                  value={rawTargetRoles}
+                  onChange={(e) => setRawTargetRoles(e.target.value)}
+                  onBlur={() => setPreferences({ ...preferences, target_roles: splitCsv(rawTargetRoles) })}
                   className="input"
                   placeholder="Software Engineer, Developer"
                 />
@@ -263,13 +385,9 @@ export default function ProfileFormPage() {
                 <label className="label">Target Locations (comma-separated)</label>
                 <input
                   type="text"
-                  value={preferences.target_locations.join(', ')}
-                  onChange={(e) =>
-                    setPreferences({
-                      ...preferences,
-                      target_locations: e.target.value.split(',').map((s) => s.trim()).filter(Boolean),
-                    })
-                  }
+                  value={rawTargetLocations}
+                  onChange={(e) => setRawTargetLocations(e.target.value)}
+                  onBlur={() => setPreferences({ ...preferences, target_locations: splitCsv(rawTargetLocations) })}
                   className="input"
                   placeholder="Seattle, Remote"
                 />
@@ -326,13 +444,9 @@ export default function ProfileFormPage() {
               <label className="label">Excluded Companies (comma-separated)</label>
               <input
                 type="text"
-                value={preferences.excluded_companies.join(', ')}
-                onChange={(e) =>
-                  setPreferences({
-                    ...preferences,
-                    excluded_companies: e.target.value.split(',').map((s) => s.trim()).filter(Boolean),
-                  })
-                }
+                value={rawExcludedCompanies}
+                onChange={(e) => setRawExcludedCompanies(e.target.value)}
+                onBlur={() => setPreferences({ ...preferences, excluded_companies: splitCsv(rawExcludedCompanies) })}
                 className="input"
                 placeholder="Companies to exclude from matches"
               />

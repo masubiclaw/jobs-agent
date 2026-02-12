@@ -1,5 +1,6 @@
 """Job service wrapping the existing JobCache with multi-user support."""
 
+import json
 import logging
 import hashlib
 from datetime import datetime
@@ -14,7 +15,6 @@ from api.models import (
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from job_agent_coordinator.tools.job_cache import get_cache, JobCache
-from job_agent_coordinator.tools.toon_format import to_toon, from_toon
 
 logger = logging.getLogger(__name__)
 
@@ -36,19 +36,19 @@ class JobService:
         """Get user-specific job metadata file."""
         user_dir = self.base_dir / user_id
         user_dir.mkdir(parents=True, exist_ok=True)
-        return user_dir / "job_metadata.toon"
-    
+        return user_dir / "job_metadata.json"
+
     def _load_user_job_metadata(self, user_id: str) -> Dict[str, Dict[str, Any]]:
         """Load user-specific job metadata."""
         meta_file = self._user_jobs_file(user_id)
         if meta_file.exists():
             try:
-                data = from_toon(meta_file.read_text())
+                data = json.loads(meta_file.read_text())
                 return data.get("jobs", {}) if isinstance(data, dict) else {}
             except:
                 pass
         return {}
-    
+
     def _save_user_job_metadata(self, user_id: str, metadata: Dict[str, Dict[str, Any]]):
         """Save user-specific job metadata."""
         meta_file = self._user_jobs_file(user_id)
@@ -56,7 +56,7 @@ class JobService:
             "jobs": metadata,
             "updated_at": datetime.now().isoformat()
         }
-        meta_file.write_text(to_toon(data) + '\n')
+        meta_file.write_text(json.dumps(data, indent=2))
     
     def _get_user_job_meta(self, user_id: str, job_id: str) -> Dict[str, Any]:
         """Get user-specific metadata for a job."""
@@ -103,12 +103,12 @@ class JobService:
         
         return JobResponse(
             id=job.get("id", ""),
-            title=job.get("title", "Unknown"),
-            company=job.get("company", "Unknown"),
-            location=job.get("location", "Unknown"),
-            salary=job.get("salary", "Not specified"),
-            url=job.get("url", ""),
-            description=job.get("description", ""),
+            title=user_meta.get("title", job.get("title", "Unknown")),
+            company=user_meta.get("company", job.get("company", "Unknown")),
+            location=user_meta.get("location", job.get("location", "Unknown")),
+            salary=user_meta.get("salary", job.get("salary", "Not specified")),
+            url=user_meta.get("url", job.get("url", "")),
+            description=user_meta.get("description", job.get("description", "")),
             platform=job.get("platform", "unknown"),
             posted_date=job.get("posted_date", ""),
             cached_at=datetime.fromisoformat(job.get("cached_at", datetime.now().isoformat())),
@@ -348,18 +348,19 @@ JSON:"""
         return self._job_to_response(job, meta, match)
     
     def delete_job(self, job_id: str, user_id: str) -> bool:
-        """Delete a job (or just user's association with it)."""
+        """Delete a job and remove from cache."""
         # Remove user metadata
         all_meta = self._load_user_job_metadata(user_id)
-        if job_id in all_meta:
+        had_meta = job_id in all_meta
+        if had_meta:
             del all_meta[job_id]
             self._save_user_job_metadata(user_id, all_meta)
-            return True
-        
-        # If job exists in cache, mark as archived instead
+
+        # Also remove from global cache
         job = self._cache.get(job_id)
         if job:
-            self._set_user_job_meta(user_id, job_id, status=JobStatus.ARCHIVED)
+            self._cache.remove(job_id)
+            self._cache._save_jobs()
             return True
-        
-        return False
+
+        return had_meta

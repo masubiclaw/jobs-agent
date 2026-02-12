@@ -13,7 +13,15 @@ from api.services.job_service import JobService
 # Import existing tools
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-from job_agent_coordinator.tools.toon_format import to_toon, from_toon
+import json
+from job_agent_coordinator.tools.resume_tools import (
+    _run_section_generation_loop, _run_generation_loop
+)
+from job_agent_coordinator.tools.pdf_generator import (
+    generate_resume_pdf, generate_cover_letter_pdf, validate_single_page
+)
+from job_agent_coordinator.tools.document_generator import generate_resume_content
+from job_agent_coordinator.tools.document_critic import critique_document
 
 logger = logging.getLogger(__name__)
 
@@ -39,19 +47,19 @@ class DocumentService:
     
     def _docs_index_file(self, user_id: str) -> Path:
         """Get documents index file."""
-        return self._user_docs_dir(user_id) / "_index.toon"
-    
+        return self._user_docs_dir(user_id) / "_index.json"
+
     def _load_docs_index(self, user_id: str) -> Dict[str, Dict[str, Any]]:
         """Load documents index."""
         index_file = self._docs_index_file(user_id)
         if index_file.exists():
             try:
-                data = from_toon(index_file.read_text())
+                data = json.loads(index_file.read_text())
                 return data.get("documents", {}) if isinstance(data, dict) else {}
             except:
                 pass
         return {}
-    
+
     def _save_docs_index(self, user_id: str, index: Dict[str, Dict[str, Any]]):
         """Save documents index."""
         index_file = self._docs_index_file(user_id)
@@ -59,7 +67,7 @@ class DocumentService:
             "documents": index,
             "updated_at": datetime.now().isoformat()
         }
-        index_file.write_text(to_toon(data) + '\n')
+        index_file.write_text(json.dumps(data, indent=2))
     
     def _generate_doc_id(self, job_id: str, profile_id: str, doc_type: DocumentType) -> str:
         """Generate unique document ID."""
@@ -73,63 +81,95 @@ class DocumentService:
         profile_id: Optional[str],
         document_type: DocumentType
     ) -> Optional[DocumentResponse]:
-        """Generate a document (resume or cover letter)."""
+        """Generate a document (resume or cover letter).
+
+        Calls lower-level generation functions directly with profile/job dicts,
+        bypassing the TOON-returning wrapper functions in resume_tools.py
+        which depend on the old single-user ProfileStore.
+        """
         try:
             # Get profile
             if profile_id:
                 profile_response = self._profile_service.get_profile(profile_id, user_id)
             else:
                 profile_response = self._profile_service.get_active_profile(user_id)
-            
+
             if not profile_response:
                 logger.error("No profile found")
                 return None
-            
+
             # Get job
             job_response = self._job_service.get_job(job_id, user_id)
             if not job_response:
                 logger.error(f"Job not found: {job_id}")
                 return None
-            
-            # Convert to dict for existing tools
+
+            # Convert to dict for generation tools
             profile_dict = self._profile_to_dict(profile_response)
             job_dict = self._job_to_dict(job_response)
-            
-            # Import and use existing tools
-            from job_agent_coordinator.tools.resume_tools import generate_resume, generate_cover_letter
-            
+
+            company = job_dict.get("company", "Unknown")
+            candidate_name = profile_dict.get("name", "Candidate")
+            pdf_path = None
+
             if document_type == DocumentType.RESUME:
-                result = generate_resume(job_id, profile_response.id)
+                # Section-based generation with critique loop
+                content, section_critiques, critique = _run_section_generation_loop(
+                    profile_dict, job_dict
+                )
+
+                # Generate PDF with page fitting
+                pdf_path = generate_resume_pdf(content, company, candidate_name)
+                is_single_page, page_count, _ = validate_single_page(pdf_path)
+
+                if not is_single_page:
+                    # Retry with conciseness feedback
+                    page_feedback = (
+                        f"CRITICAL: The resume is {page_count} pages but MUST be exactly 1 page. "
+                        f"REDUCE content significantly. Use shorter bullet points, fewer items."
+                    )
+                    gen_result = generate_resume_content(profile_dict, job_dict, feedback=page_feedback)
+                    content = gen_result["content"]
+                    critique = critique_document(content, "resume", profile_dict, job_dict)
+                    pdf_path = generate_resume_pdf(content, company, candidate_name)
             else:
-                result = generate_cover_letter(job_id, profile_response.id)
-            
-            if not result or not isinstance(result, dict):
-                logger.error(f"Document generation failed: {result}")
-                return None
-            
-            # Parse result
+                # Cover letter generation
+                content, critique = _run_generation_loop("cover_letter", profile_dict, job_dict)
+
+                contact_parts = []
+                if profile_dict.get("email"):
+                    contact_parts.append(profile_dict["email"])
+                if profile_dict.get("phone"):
+                    contact_parts.append(profile_dict["phone"])
+                contact_info = "  |  ".join(contact_parts) if contact_parts else ""
+
+                pdf_path = generate_cover_letter_pdf(
+                    content, company, candidate_name, contact_info=contact_info
+                )
+
+            # Build response from critique object
             doc_id = self._generate_doc_id(job_id, profile_response.id, document_type)
-            
+
             quality_scores = QualityScores(
-                fact_score=result.get("fact_score", 0),
-                keyword_score=result.get("keyword_score", 0),
-                ats_score=result.get("ats_score", 0),
-                length_score=result.get("length_score", 0),
-                overall_score=result.get("overall_score", 0)
+                fact_score=critique.fact_score,
+                keyword_score=critique.keyword_score,
+                ats_score=critique.ats_score,
+                length_score=100 if critique.length_compliant else 50,
+                overall_score=critique.overall_score
             )
-            
+
             response = DocumentResponse(
                 id=doc_id,
                 job_id=job_id,
                 profile_id=profile_response.id,
                 document_type=document_type,
-                content=result.get("content", ""),
-                pdf_path=result.get("pdf_path"),
+                content=content,
+                pdf_path=str(pdf_path) if pdf_path else None,
                 quality_scores=quality_scores,
-                iterations=result.get("iterations", 1),
+                iterations=1,
                 created_at=datetime.now()
             )
-            
+
             # Save to index
             index = self._load_docs_index(user_id)
             index[doc_id] = {
@@ -137,7 +177,7 @@ class DocumentService:
                 "job_id": job_id,
                 "profile_id": profile_response.id,
                 "document_type": document_type.value,
-                "pdf_path": result.get("pdf_path"),
+                "pdf_path": str(pdf_path) if pdf_path else None,
                 "overall_score": quality_scores.overall_score,
                 "job_title": job_response.title,
                 "job_company": job_response.company,
@@ -147,9 +187,9 @@ class DocumentService:
                 "created_at": datetime.now().isoformat()
             }
             self._save_docs_index(user_id, index)
-            
+
             return response
-            
+
         except Exception as e:
             logger.error(f"Document generation error: {e}", exc_info=True)
             return None

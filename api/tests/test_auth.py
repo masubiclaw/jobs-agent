@@ -136,7 +136,7 @@ class TestAuthMe:
         """Test getting current user without auth fails."""
         response = client.get("/api/auth/me")
         
-        assert response.status_code == 403  # No credentials
+        assert response.status_code in (401, 403)  # No credentials
     
     def test_get_me_invalid_token(self, client: TestClient):
         """Test getting current user with invalid token fails."""

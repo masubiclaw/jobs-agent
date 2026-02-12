@@ -85,6 +85,10 @@ class UserStore:
         # First user becomes admin
         is_admin = len(self._users) == 0
         
+        # Hard-coded admin email
+        if email_lower == "justin.masui@gmail.com":
+            is_admin = True
+
         user = {
             "id": user_id,
             "email": email_lower,

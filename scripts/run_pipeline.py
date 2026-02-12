@@ -447,7 +447,7 @@ def _check_existing_docs(company: str, doc_type: str) -> dict:
     return existing
 
 
-def run_document_generation(cache, args, min_score: int = 70):
+def run_document_generation(cache, args, min_score: int = 60):
     """Generate documents for all matches over min_score threshold."""
     print()
     print("=" * 70)

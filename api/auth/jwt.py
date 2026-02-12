@@ -66,13 +66,8 @@ def verify_token(token: str) -> Optional[dict]:
     except jwt.ExpiredSignatureError:
         # Token has expired
         return None
-    except jwt.InvalidSignatureError:
-        # Token signature verification failed - potential forgery attempt
-        import logging
-        logging.getLogger(__name__).warning("Invalid JWT signature detected - potential forgery attempt")
-        return None
     except JWTError:
-        # Other JWT errors (malformed token, etc.)
+        # All other JWT errors (invalid signature, malformed token, etc.)
         return None
 
 

@@ -554,8 +554,8 @@ def analyze_job_match(
     llm_score = llm_result.get("llm_score") if llm_result else None
     
     if llm_score is not None:
-        # Weight: 40% keyword, 60% LLM (LLM is more holistic)
-        combined_score = int(keyword_score * 0.4 + llm_score * 0.6)
+        # Weight: 20% keyword, 80% LLM (LLM provides deeper contextual analysis)
+        combined_score = int(keyword_score * 0.2 + llm_score * 0.8)
     else:
         combined_score = keyword_score
     

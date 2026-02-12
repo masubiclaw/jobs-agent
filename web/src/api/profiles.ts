@@ -30,4 +30,21 @@ export const profilesApi = {
     const response = await apiClient.post<Profile>(`/profiles/${id}/activate`)
     return response.data
   },
+
+  importPdf: async (file: File): Promise<Profile> => {
+    const formData = new FormData()
+    formData.append('file', file)
+    const response = await apiClient.post<Profile>('/profiles/import/pdf', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 180000,
+    })
+    return response.data
+  },
+
+  importLinkedIn: async (url: string): Promise<Profile> => {
+    const response = await apiClient.post<Profile>('/profiles/import/linkedin', { url }, {
+      timeout: 60000,
+    })
+    return response.data
+  },
 }

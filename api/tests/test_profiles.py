@@ -238,6 +238,76 @@ class TestProfileAuthorization:
         
         # User 2 should not see user 1's profile
         response = client.get(f"/api/profiles/{profile_id}", headers=headers2)
-        
+
         # Should return 404 (not found for this user)
         assert response.status_code == 404
+
+
+class TestPerUserExclusions:
+    """Tests that excluded companies are per-user and properly isolated."""
+
+    def test_excluded_companies_stored_per_user(self, client: TestClient):
+        """Test that excluded companies are stored per user profile."""
+        # Create user A
+        user_a = {"email": "user_a@example.com", "password": "password123", "name": "User A"}
+        client.post("/api/auth/register", json=user_a)
+        login_a = client.post("/api/auth/login", json={"email": user_a["email"], "password": user_a["password"]})
+        headers_a = {"Authorization": f"Bearer {login_a.json()['access_token']}"}
+
+        # Create user B
+        user_b = {"email": "user_b@example.com", "password": "password123", "name": "User B"}
+        client.post("/api/auth/register", json=user_b)
+        login_b = client.post("/api/auth/login", json={"email": user_b["email"], "password": user_b["password"]})
+        headers_b = {"Authorization": f"Bearer {login_b.json()['access_token']}"}
+
+        # User A sets exclusions
+        profile_a = client.post("/api/profiles", json={"name": "A Profile", "location": "Seattle"}, headers=headers_a)
+        pa_id = profile_a.json()["id"]
+        client.put(f"/api/profiles/{pa_id}", json={
+            "preferences": {"excluded_companies": ["Amazon", "Meta"]}
+        }, headers=headers_a)
+
+        # User B sets different exclusions
+        profile_b = client.post("/api/profiles", json={"name": "B Profile", "location": "NYC"}, headers=headers_b)
+        pb_id = profile_b.json()["id"]
+        client.put(f"/api/profiles/{pb_id}", json={
+            "preferences": {"excluded_companies": ["Google", "Apple"]}
+        }, headers=headers_b)
+
+        # Verify user A's exclusions
+        resp_a = client.get(f"/api/profiles/{pa_id}", headers=headers_a)
+        assert resp_a.status_code == 200
+        excl_a = resp_a.json()["preferences"]["excluded_companies"]
+        assert "Amazon" in excl_a or "amazon" in excl_a
+        assert "Meta" in excl_a or "meta" in excl_a
+
+        # Verify user B's exclusions are different
+        resp_b = client.get(f"/api/profiles/{pb_id}", headers=headers_b)
+        assert resp_b.status_code == 200
+        excl_b = resp_b.json()["preferences"]["excluded_companies"]
+        assert "Google" in excl_b or "google" in excl_b
+        assert "Apple" in excl_b or "apple" in excl_b
+
+        # User A should not have Google/Apple
+        assert "Google" not in excl_a and "google" not in excl_a
+
+    def test_excluded_companies_persist_after_update(self, client: TestClient, auth_headers: dict, test_profile_data: dict):
+        """Test that excluded companies persist correctly after profile update."""
+        # Create profile
+        create = client.post("/api/profiles", json=test_profile_data, headers=auth_headers)
+        pid = create.json()["id"]
+
+        # Set exclusions
+        client.put(f"/api/profiles/{pid}", json={
+            "preferences": {"excluded_companies": ["BadCorp", "WorseInc"]}
+        }, headers=auth_headers)
+
+        # Update other fields (name) - exclusions should persist
+        client.put(f"/api/profiles/{pid}", json={"name": "New Name"}, headers=auth_headers)
+
+        # Verify exclusions still there
+        resp = client.get(f"/api/profiles/{pid}", headers=auth_headers)
+        data = resp.json()
+        assert data["name"] == "New Name"
+        excl = data["preferences"]["excluded_companies"]
+        assert len(excl) >= 2

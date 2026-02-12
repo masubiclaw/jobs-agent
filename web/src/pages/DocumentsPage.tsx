@@ -36,7 +36,13 @@ export default function DocumentsPage() {
 
   const { data: topJobs = [] } = useQuery({
     queryKey: ['top-jobs-for-gen'],
-    queryFn: () => jobsApi.getTop(50, 0),
+    queryFn: async () => {
+      // Try top-matched jobs first, fall back to all jobs
+      const top = await jobsApi.getTop(50, 0)
+      if (top.length > 0) return top
+      const all = await jobsApi.list({ page_size: 100 })
+      return all.jobs
+    },
   })
 
   const generateMutation = useMutation({
