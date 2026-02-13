@@ -419,13 +419,10 @@ class TestExclusionIntegration:
     def test_analyze_job_match_respects_exclusions(self, sample_profile_with_exclusions):
         """Test that analyze_job_match respects exclusion list."""
         from job_agent_coordinator.sub_agents.job_matcher.agent import analyze_job_match
-        from job_agent_coordinator.tools import profile_store
-        
-        with patch.object(profile_store, 'get_store') as mock_get_store:
-            mock_store = MagicMock()
-            mock_store.get_search_context.return_value = sample_profile_with_exclusions
-            mock_get_store.return_value = mock_store
-            
+
+        with patch('job_agent_coordinator.sub_agents.job_matcher.agent._get_profile_context') as mock_profile:
+            mock_profile.return_value = sample_profile_with_exclusions
+
             # Test excluded company
             result = analyze_job_match(
                 job_title="Software Engineer",
@@ -438,7 +435,7 @@ class TestExclusionIntegration:
                 use_cache=False,
                 run_llm=False,
             )
-            
+
             # Verify exclusion is applied
             assert result.get("match_level") == "excluded"
             assert result.get("keyword_score") == 0
@@ -447,13 +444,10 @@ class TestExclusionIntegration:
     def test_analyze_job_match_allows_non_excluded(self, sample_profile_with_exclusions):
         """Test that analyze_job_match allows non-excluded companies."""
         from job_agent_coordinator.sub_agents.job_matcher.agent import analyze_job_match
-        from job_agent_coordinator.tools import profile_store
-        
-        with patch.object(profile_store, 'get_store') as mock_get_store:
-            mock_store = MagicMock()
-            mock_store.get_search_context.return_value = sample_profile_with_exclusions
-            mock_get_store.return_value = mock_store
-            
+
+        with patch('job_agent_coordinator.sub_agents.job_matcher.agent._get_profile_context') as mock_profile:
+            mock_profile.return_value = sample_profile_with_exclusions
+
             # Test non-excluded company
             result = analyze_job_match(
                 job_title="Software Engineer",
@@ -466,7 +460,7 @@ class TestExclusionIntegration:
                 use_cache=False,
                 run_llm=False,
             )
-            
+
             assert result.get("match_level") != "excluded"
             assert result.get("excluded") is not True
             assert result.get("keyword_score", 0) > 0

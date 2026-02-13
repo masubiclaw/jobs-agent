@@ -382,8 +382,8 @@ class TestTwoPassMatching:
         assert result["success"] is True
         assert result["keyword_score"] >= 60
         assert result["llm_score"] == 82
-        # Combined: 40% keyword + 60% LLM
-        expected_combined = int(result["keyword_score"] * 0.4 + 82 * 0.6)
+        # Combined: 20% keyword + 80% LLM
+        expected_combined = int(result["keyword_score"] * 0.2 + 82 * 0.8)
         assert result["combined_score"] == expected_combined
     
     @patch('job_agent_coordinator.sub_agents.job_matcher.agent._get_profile_context')
