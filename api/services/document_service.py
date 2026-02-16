@@ -213,17 +213,24 @@ class DocumentService:
         }
     
     def get_document_pdf(self, document_id: str, user_id: str) -> Optional[Path]:
-        """Get PDF path for a document."""
+        """Get PDF path for a document with path traversal protection."""
         index = self._load_docs_index(user_id)
         doc_info = index.get(document_id)
-        
+
         if not doc_info or not doc_info.get("pdf_path"):
             return None
-        
-        pdf_path = Path(doc_info["pdf_path"])
-        if pdf_path.exists():
+
+        pdf_path = Path(doc_info["pdf_path"]).resolve()
+
+        # Validate path is within allowed directories
+        allowed_dirs = [Path(".job_cache").resolve(), Path("/tmp").resolve()]
+        if not any(str(pdf_path).startswith(str(d)) for d in allowed_dirs):
+            logger.warning(f"Path traversal attempt blocked: {pdf_path}")
+            return None
+
+        if pdf_path.exists() and pdf_path.suffix == ".pdf":
             return pdf_path
-        
+
         return None
     
     def _profile_to_dict(self, profile) -> Dict[str, Any]:

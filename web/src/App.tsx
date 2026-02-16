@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import Layout from './components/Layout'
+import LandingPage from './pages/LandingPage'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import DashboardPage from './pages/DashboardPage'
@@ -16,11 +17,12 @@ import AdminJobsPage from './pages/admin/AdminJobsPage'
 import AdminScraperPage from './pages/admin/AdminScraperPage'
 import AdminPipelinePage from './pages/admin/AdminPipelinePage'
 import NotFoundPage from './pages/NotFoundPage'
+import ErrorBoundary from './components/ErrorBoundary'
 
 // Protected route component
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth()
-  
+
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -28,18 +30,18 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
       </div>
     )
   }
-  
+
   if (!user) {
-    return <Navigate to="/login" replace />
+    return <Navigate to="/welcome" replace />
   }
-  
+
   return <>{children}</>
 }
 
 // Admin route component
 function AdminRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth()
-  
+
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -47,23 +49,24 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
       </div>
     )
   }
-  
+
   if (!user || !user.is_admin) {
     return <Navigate to="/" replace />
   }
-  
+
   return <>{children}</>
 }
 
 function AppRoutes() {
   const { user } = useAuth()
-  
+
   return (
     <Routes>
       {/* Public routes */}
+      <Route path="/welcome" element={user ? <Navigate to="/" replace /> : <LandingPage />} />
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <LoginPage />} />
       <Route path="/register" element={user ? <Navigate to="/" replace /> : <RegisterPage />} />
-      
+
       {/* Protected routes */}
       <Route path="/" element={
         <ProtectedRoute>
@@ -71,21 +74,21 @@ function AppRoutes() {
         </ProtectedRoute>
       }>
         <Route index element={<DashboardPage />} />
-        
+
         {/* Profile routes */}
         <Route path="profiles" element={<ProfilesPage />} />
         <Route path="profiles/new" element={<ProfileFormPage />} />
         <Route path="profiles/:id" element={<ProfileFormPage />} />
-        
+
         {/* Job routes */}
         <Route path="jobs" element={<JobsPage />} />
         <Route path="jobs/add" element={<AddJobPage />} />
         <Route path="jobs/top" element={<TopJobsPage />} />
         <Route path="jobs/:id" element={<JobDetailPage />} />
-        
+
         {/* Document routes */}
         <Route path="documents" element={<DocumentsPage />} />
-        
+
         {/* Admin routes */}
         <Route path="admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
         <Route path="admin/jobs" element={<AdminRoute><AdminJobsPage /></AdminRoute>} />
@@ -103,7 +106,9 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <AppRoutes />
+        <ErrorBoundary>
+          <AppRoutes />
+        </ErrorBoundary>
       </AuthProvider>
     </BrowserRouter>
   )

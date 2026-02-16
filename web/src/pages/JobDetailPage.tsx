@@ -112,7 +112,12 @@ export default function JobDetailPage() {
       queryClient.invalidateQueries({ queryKey: ['documents'] })
     } catch (err: unknown) {
       const error = err as { response?: { data?: { detail?: string } } }
-      setGenerationStatus(error?.response?.data?.detail || 'Generation failed. Check active profile and Ollama.')
+      const msg = error?.response?.data?.detail || ''
+      if (msg.toLowerCase().includes('ollama') || msg.toLowerCase().includes('connection')) {
+        setGenerationStatus('Document generation is temporarily unavailable. The AI service needs to be configured by the administrator.')
+      } else {
+        setGenerationStatus(msg || 'Generation failed. Make sure you have an active profile set up.')
+      }
     } finally {
       setIsGenerating(false)
     }
@@ -358,20 +363,27 @@ export default function JobDetailPage() {
       {/* Match Details */}
       {job.match && (
         <div className="card">
-          <h2 className="text-lg font-semibold mb-4">Match Analysis</h2>
-          <div className="grid grid-cols-3 gap-4 mb-4">
+          <h2 className="text-lg font-semibold mb-2">Match Analysis</h2>
+          <p className="text-sm text-gray-500 mb-4">
+            {job.match.combined_score >= 80
+              ? 'Strong match — this job aligns well with your skills and experience.'
+              : job.match.combined_score >= 60
+              ? 'Good match — you meet many of the requirements for this role.'
+              : 'Partial match — some of your skills align, but there may be gaps.'}
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
             <div className="text-center p-4 bg-gray-50 rounded-lg">
               <p className="text-2xl font-bold text-primary-600">
                 {job.match.keyword_score}%
               </p>
-              <p className="text-sm text-gray-500">Keyword Score</p>
+              <p className="text-sm text-gray-500">Skills Match</p>
             </div>
             {job.match.llm_score !== null && job.match.llm_score !== undefined && (
               <div className="text-center p-4 bg-gray-50 rounded-lg">
                 <p className="text-2xl font-bold text-primary-600">
                   {job.match.llm_score}%
                 </p>
-                <p className="text-sm text-gray-500">LLM Score</p>
+                <p className="text-sm text-gray-500">Overall Fit</p>
               </div>
             )}
             <div className="text-center p-4 bg-gray-50 rounded-lg">
@@ -381,9 +393,6 @@ export default function JobDetailPage() {
               <p className="text-sm text-gray-500">Combined Score</p>
             </div>
           </div>
-          <p className="text-sm text-gray-500">
-            Match Level: <span className="font-medium capitalize">{job.match.match_level}</span>
-          </p>
         </div>
       )}
 
@@ -400,7 +409,7 @@ export default function JobDetailPage() {
         <h2 className="text-lg font-semibold mb-4">Details</h2>
         <dl className="grid grid-cols-2 gap-4 text-sm">
           <div>
-            <dt className="text-gray-500">Platform</dt>
+            <dt className="text-gray-500">Source</dt>
             <dd className="font-medium capitalize">{job.platform}</dd>
           </div>
           <div>
@@ -412,7 +421,7 @@ export default function JobDetailPage() {
             <dd className="font-medium">{job.posted_date || 'Unknown'}</dd>
           </div>
           <div>
-            <dt className="text-gray-500">Cached At</dt>
+            <dt className="text-gray-500">Added On</dt>
             <dd className="font-medium">
               {new Date(job.cached_at).toLocaleDateString()}
             </dd>

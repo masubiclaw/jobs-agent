@@ -192,7 +192,7 @@ export default function ProfileFormPage() {
         <div className="card space-y-4">
           <h2 className="text-lg font-semibold">Basic Information</h2>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="label">Full Name</label>
               <input
@@ -300,7 +300,7 @@ export default function ProfileFormPage() {
             <h2 className="text-lg font-semibold">Experience</h2>
 
             <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                 <input
                   type="text"
                   value={newExp.title}
@@ -316,7 +316,7 @@ export default function ProfileFormPage() {
                   placeholder="Company"
                 />
               </div>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 <input
                   type="text"
                   value={newExp.start_date}
@@ -369,7 +369,7 @@ export default function ProfileFormPage() {
           <div className="card space-y-4">
             <h2 className="text-lg font-semibold">Job Preferences</h2>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="label">Target Roles (comma-separated)</label>
                 <input

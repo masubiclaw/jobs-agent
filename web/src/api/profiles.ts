@@ -36,7 +36,7 @@ export const profilesApi = {
     formData.append('file', file)
     const response = await apiClient.post<Profile>('/profiles/import/pdf', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: 180000,
+      timeout: 300000,
     })
     return response.data
   },

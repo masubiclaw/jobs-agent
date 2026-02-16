@@ -13,11 +13,16 @@ from api.models import UserResponse
 # Configuration - require environment variable for security
 SECRET_KEY = os.getenv("JWT_SECRET_KEY")
 if not SECRET_KEY:
-    # In development, use a warning and a dev key; in production this should fail
+    _env = os.getenv("ENVIRONMENT", "development").lower()
+    if _env in ("production", "prod", "staging"):
+        raise RuntimeError(
+            "JWT_SECRET_KEY environment variable is required in production. "
+            "Set it to a strong random secret."
+        )
     import warnings
     warnings.warn(
-        "JWT_SECRET_KEY environment variable not set. Using insecure development key. "
-        "Set JWT_SECRET_KEY for production use.",
+        "JWT_SECRET_KEY not set. Using insecure dev key. "
+        "Set JWT_SECRET_KEY before deploying to production.",
         UserWarning
     )
     SECRET_KEY = "dev-only-insecure-key-change-in-production"

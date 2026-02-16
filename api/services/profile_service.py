@@ -89,22 +89,34 @@ class ProfileService:
         # Parse skills
         skills = []
         for s in profile.get("skills", []):
+            added_at = s.get("added_at")
+            if isinstance(added_at, str):
+                added_at = datetime.fromisoformat(added_at)
+            elif not isinstance(added_at, datetime):
+                added_at = None
+
             skills.append(Skill(
                 name=s.get("name", ""),
                 level=s.get("level", "intermediate"),
-                added_at=datetime.fromisoformat(s["added_at"]) if s.get("added_at") else None
+                added_at=added_at
             ))
-        
+
         # Parse experience
         experience = []
         for e in profile.get("experience", []):
+            added_at = e.get("added_at")
+            if isinstance(added_at, str):
+                added_at = datetime.fromisoformat(added_at)
+            elif not isinstance(added_at, datetime):
+                added_at = None
+
             experience.append(Experience(
                 title=e.get("title", ""),
                 company=e.get("company", ""),
                 start_date=e.get("start_date", ""),
                 end_date=e.get("end_date", "present"),
                 description=e.get("description", ""),
-                added_at=datetime.fromisoformat(e["added_at"]) if e.get("added_at") else None
+                added_at=added_at
             ))
         
         # Parse preferences

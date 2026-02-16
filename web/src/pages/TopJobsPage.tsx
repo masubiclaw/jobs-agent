@@ -87,17 +87,19 @@ export default function TopJobsPage() {
                     <span className="capitalize">{job.platform}</span>
                   </div>
                   {job.match && (
-                    <div className="flex items-center gap-4 mt-3 text-sm">
+                    <div className="flex flex-wrap items-center gap-4 mt-3 text-sm">
                       <span className="text-gray-500">
-                        Keyword: <span className="font-medium">{job.match.keyword_score}%</span>
+                        Skills: <span className="font-medium">{job.match.keyword_score}%</span>
                       </span>
                       {job.match.llm_score !== null && job.match.llm_score !== undefined && (
                         <span className="text-gray-500">
-                          LLM: <span className="font-medium">{job.match.llm_score}%</span>
+                          Overall Fit: <span className="font-medium">{job.match.llm_score}%</span>
                         </span>
                       )}
-                      <span className="px-2 py-0.5 bg-gray-100 rounded text-gray-600">
-                        {job.match.match_level}
+                      <span className="px-2 py-0.5 bg-gray-100 rounded text-gray-600 capitalize">
+                        {job.match.match_level === 'strong' ? 'Strong Match'
+                          : job.match.match_level === 'good' ? 'Good Match'
+                          : 'Partial Match'}
                       </span>
                     </div>
                   )}

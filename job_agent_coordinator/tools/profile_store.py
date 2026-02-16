@@ -469,7 +469,7 @@ class ProfileStore:
             "target_roles": prefs.get("target_roles", []),
             "target_locations": prefs.get("target_locations", []),
             "remote_preference": prefs.get("remote_preference"),
-            "salary_range": f"${prefs.get('salary_min', 0):,} - ${prefs.get('salary_max', 0):,}" if prefs.get("salary_min") else None,
+            "salary_range": f"${prefs.get('salary_min', 0):,} - ${prefs.get('salary_max', 0):,}" if prefs.get("salary_min") and prefs.get("salary_max") else None,
             "excluded_companies": prefs.get("excluded_companies", []),
             "resume_summary": profile.get("resume", {}).get("summary", ""),
         }

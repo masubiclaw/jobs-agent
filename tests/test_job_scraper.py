@@ -112,7 +112,7 @@ def test_scrape_single_source():
         return False
     
     print(f"✅ Scraped {result['source']}")
-    print(f"   Category: {result['category']}")
+    print(f"   Category: {result.get('category', 'N/A')}")
     print(f"   Jobs found: {result['jobs_found']}")
     print(f"   Jobs cached: {result.get('jobs_cached', 0)}")
     print(f"   Duplicates: {result.get('duplicates_skipped', 0)}")

@@ -34,6 +34,23 @@ def clean_cache_dir(test_cache_dir: Path) -> Generator[Path, None, None]:
     yield test_cache_dir
 
 
+@pytest.fixture(autouse=True)
+def _clear_rate_limits():
+    """Clear rate limit store before each test."""
+    from api.routes.auth import _rate_limit_store
+    _rate_limit_store.clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_user_store():
+    """Reset user store before each test to ensure isolation."""
+    import api.auth.user_store as us
+    store = us.get_user_store()
+    store._users.clear()
+    yield
+    store._users.clear()
+
+
 @pytest.fixture(scope="module")
 def client() -> Generator[TestClient, None, None]:
     """Create a test client for the API."""

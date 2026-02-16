@@ -64,11 +64,19 @@ class AdminService:
         """Run job scraper in background."""
         try:
             from job_agent_coordinator.tools.job_links_scraper import scrape_job_links
-            
-            logger.info(f"Starting scraper: file={file_path}, categories={categories}, max={max_sources}")
-            
+
+            # Restrict file_path to .md files in the project root
+            safe_path = file_path or "JobOpeningsLink.md"
+            resolved = Path(safe_path).resolve()
+            project_root = Path(".").resolve()
+            if not str(resolved).startswith(str(project_root)) or not safe_path.endswith(".md"):
+                logger.warning(f"Blocked scraper file path: {safe_path}")
+                return
+
+            logger.info(f"Starting scraper: file={safe_path}, categories={categories}, max={max_sources}")
+
             result = scrape_job_links(
-                file_path=file_path or "JobOpeningsLink.md",
+                file_path=safe_path,
                 categories=categories or "",
                 max_sources=max_sources,
                 cache_results=True,
@@ -114,47 +122,35 @@ class AdminService:
         """Run job matcher in background."""
         try:
             # Import matcher
-            from job_agent_coordinator.sub_agents.job_matcher.agent import (
-                keyword_match_job,
-                get_profile_hash
-            )
-            from job_agent_coordinator.tools.profile_store import get_store
-            
-            logger.info(f"Starting matcher: profile={profile_id}, llm={llm_pass}, limit={limit}")
-            
-            # Get profile
-            store = get_store()
-            if profile_id:
-                profile = store.get(profile_id)
-            else:
-                profile = store.get_active()
-            
-            if not profile:
-                logger.error("No profile found for matching")
-                return
-            
-            profile_hash = get_profile_hash(profile)
-            
+            from job_agent_coordinator.sub_agents.job_matcher.agent import analyze_job_match
+
+            logger.info(f"Starting matcher: llm={llm_pass}, limit={limit}")
+
             # Get jobs to match
             jobs = self._cache.list_all(limit=limit)
             matched = 0
-            
+
             for job in jobs:
                 job_id = job.get("id", "")
-                
-                # Skip if already matched
-                existing = self._cache.get_match(job_id, profile_hash)
-                if existing:
-                    continue
-                
-                # Run keyword match
-                result = keyword_match_job(job, profile)
-                
-                if result:
-                    self._cache.add_match(job_id, result, profile_hash)
+
+                # Run analysis
+                result = analyze_job_match(
+                    job_title=job.get("title", ""),
+                    company=job.get("company", ""),
+                    job_description=job.get("description", ""),
+                    location=job.get("location", ""),
+                    salary_info=job.get("salary", ""),
+                    job_url=job.get("url", ""),
+                    job_id=job_id,
+                    use_cache=True,
+                    fetch_description=False,
+                    run_llm=llm_pass
+                )
+
+                if result.get("success") and not result.get("from_cache"):
                     matched += 1
-            
-            logger.info(f"Matcher completed: matched {matched} jobs")
+
+            logger.info(f"Matcher completed: matched {matched} new jobs")
             
         except Exception as e:
             logger.error(f"Matcher failed: {e}", exc_info=True)

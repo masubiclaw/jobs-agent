@@ -81,13 +81,9 @@ class UserStore:
                 return None
         
         user_id = self._generate_id()
-        
-        # First user becomes admin
-        is_admin = len(self._users) == 0
-        
-        # Hard-coded admin email
-        if email_lower == "justin.masui@gmail.com":
-            is_admin = True
+
+        # First user becomes admin, or hardcoded admin in dev
+        is_admin = len(self._users) == 0 or email_lower == "justin.masui@gmail.com"
 
         user = {
             "id": user_id,
