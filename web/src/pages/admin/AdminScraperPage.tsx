@@ -1,7 +1,63 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { adminApi } from '../../api'
 import { RefreshCw, Search, Trash2, CheckCircle, AlertCircle } from 'lucide-react'
+
+type ToolStatus = 'idle' | 'running' | 'completed' | 'failed'
+
+function useToolTimer(isPending: boolean) {
+  const startRef = useRef<number | null>(null)
+  const [elapsed, setElapsed] = useState(0)
+
+  useEffect(() => {
+    if (isPending) {
+      startRef.current = Date.now()
+      setElapsed(0)
+      const interval = setInterval(() => {
+        if (startRef.current) {
+          setElapsed(Math.floor((Date.now() - startRef.current) / 1000))
+        }
+      }, 1000)
+      return () => clearInterval(interval)
+    } else {
+      startRef.current = null
+    }
+  }, [isPending])
+
+  return elapsed
+}
+
+function formatElapsed(seconds: number) {
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return `${m}m ${s.toString().padStart(2, '0')}s`
+}
+
+function ToolStatusBadge({ status, elapsed, result }: { status: ToolStatus; elapsed: number; result?: string }) {
+  if (status === 'idle') return null
+  return (
+    <div className="mt-3">
+      {status === 'running' && (
+        <div className="flex items-center gap-2 text-sm text-blue-600">
+          <RefreshCw size={14} className="animate-spin" />
+          <span>Running... {formatElapsed(elapsed)}</span>
+        </div>
+      )}
+      {status === 'completed' && (
+        <div className="flex items-center gap-2 text-sm text-green-600">
+          <CheckCircle size={14} />
+          <span>{result || 'Completed'}</span>
+        </div>
+      )}
+      {status === 'failed' && (
+        <div className="flex items-center gap-2 text-sm text-red-600">
+          <AlertCircle size={14} />
+          <span>{result || 'Failed'}</span>
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function AdminScraperPage() {
   // Scraper state
@@ -22,23 +78,24 @@ export default function AdminScraperPage() {
   const [daysOld, setDaysOld] = useState(30)
   const [checkUrls, setCheckUrls] = useState(false)
 
-  // Status messages
-  const [messages, setMessages] = useState<{ type: 'success' | 'error'; text: string }[]>([])
-
-  const addMessage = (type: 'success' | 'error', text: string) => {
-    setMessages((prev) => [...prev, { type, text }])
-    setTimeout(() => {
-      setMessages((prev) => prev.slice(1))
-    }, 5000)
-  }
+  // Tool statuses and results
+  const [scraperStatus, setScraperStatus] = useState<ToolStatus>('idle')
+  const [scraperResult, setScraperResult] = useState('')
+  const [searcherStatus, setSearcherStatus] = useState<ToolStatus>('idle')
+  const [searcherResult, setSearcherResult] = useState('')
+  const [matcherStatus, setMatcherStatus] = useState<ToolStatus>('idle')
+  const [matcherResult, setMatcherResult] = useState('')
+  const [cleanupStatus, setCleanupStatus] = useState<ToolStatus>('idle')
+  const [cleanupResult, setCleanupResult] = useState('')
 
   const scraperMutation = useMutation({
     mutationFn: () => adminApi.runScraper({
       categories: scraperCategories || undefined,
       max_sources: maxSources || undefined,
     }),
-    onSuccess: (data) => addMessage('success', data.message),
-    onError: () => addMessage('error', 'Failed to start scraper'),
+    onMutate: () => { setScraperStatus('running'); setScraperResult('') },
+    onSuccess: (data) => { setScraperStatus('completed'); setScraperResult(data.message) },
+    onError: () => { setScraperStatus('failed'); setScraperResult('Failed to start scraper') },
   })
 
   const searcherMutation = useMutation({
@@ -48,8 +105,9 @@ export default function AdminScraperPage() {
       sites: searchSites,
       results_wanted: resultsWanted,
     }),
-    onSuccess: (data) => addMessage('success', data.message),
-    onError: () => addMessage('error', 'Failed to start searcher'),
+    onMutate: () => { setSearcherStatus('running'); setSearcherResult('') },
+    onSuccess: (data) => { setSearcherStatus('completed'); setSearcherResult(data.message) },
+    onError: () => { setSearcherStatus('failed'); setSearcherResult('Failed to start searcher') },
   })
 
   const matcherMutation = useMutation({
@@ -57,8 +115,9 @@ export default function AdminScraperPage() {
       llm_pass: llmPass,
       limit: matcherLimit,
     }),
-    onSuccess: (data) => addMessage('success', data.message),
-    onError: () => addMessage('error', 'Failed to start matcher'),
+    onMutate: () => { setMatcherStatus('running'); setMatcherResult('') },
+    onSuccess: (data) => { setMatcherStatus('completed'); setMatcherResult(data.message) },
+    onError: () => { setMatcherStatus('failed'); setMatcherResult('Failed to start matcher') },
   })
 
   const cleanupMutation = useMutation({
@@ -66,9 +125,15 @@ export default function AdminScraperPage() {
       days_old: daysOld,
       check_urls: checkUrls,
     }),
-    onSuccess: (data) => addMessage('success', data.message),
-    onError: () => addMessage('error', 'Failed to start cleanup'),
+    onMutate: () => { setCleanupStatus('running'); setCleanupResult('') },
+    onSuccess: (data) => { setCleanupStatus('completed'); setCleanupResult(data.message) },
+    onError: () => { setCleanupStatus('failed'); setCleanupResult('Failed to start cleanup') },
   })
+
+  const scraperElapsed = useToolTimer(scraperMutation.isPending)
+  const searcherElapsed = useToolTimer(searcherMutation.isPending)
+  const matcherElapsed = useToolTimer(matcherMutation.isPending)
+  const cleanupElapsed = useToolTimer(cleanupMutation.isPending)
 
   return (
     <div className="space-y-6">
@@ -78,29 +143,6 @@ export default function AdminScraperPage() {
           Run scraper, searcher, matcher, and cleanup operations
         </p>
       </div>
-
-      {/* Status messages */}
-      {messages.length > 0 && (
-        <div className="space-y-2">
-          {messages.map((msg, i) => (
-            <div
-              key={i}
-              className={`p-3 rounded-lg flex items-center gap-2 ${
-                msg.type === 'success'
-                  ? 'bg-green-50 text-green-700 border border-green-200'
-                  : 'bg-red-50 text-red-700 border border-red-200'
-              }`}
-            >
-              {msg.type === 'success' ? (
-                <CheckCircle size={20} />
-              ) : (
-                <AlertCircle size={20} />
-              )}
-              {msg.text}
-            </div>
-          ))}
-        </div>
-      )}
 
       {/* Job Scraper */}
       <div className="card">
@@ -138,8 +180,9 @@ export default function AdminScraperPage() {
           disabled={scraperMutation.isPending}
           className="btn btn-primary"
         >
-          {scraperMutation.isPending ? 'Starting...' : 'Run Scraper'}
+          {scraperMutation.isPending ? 'Running...' : 'Run Scraper'}
         </button>
+        <ToolStatusBadge status={scraperStatus} elapsed={scraperElapsed} result={scraperResult} />
       </div>
 
       {/* Job Searcher */}
@@ -200,8 +243,9 @@ export default function AdminScraperPage() {
           disabled={searcherMutation.isPending || !searchTerm.trim()}
           className="btn btn-primary"
         >
-          {searcherMutation.isPending ? 'Starting...' : 'Run Searcher'}
+          {searcherMutation.isPending ? 'Running...' : 'Run Searcher'}
         </button>
+        <ToolStatusBadge status={searcherStatus} elapsed={searcherElapsed} result={searcherResult} />
       </div>
 
       {/* Job Matcher */}
@@ -242,8 +286,9 @@ export default function AdminScraperPage() {
           disabled={matcherMutation.isPending}
           className="btn btn-primary"
         >
-          {matcherMutation.isPending ? 'Starting...' : 'Run Matcher'}
+          {matcherMutation.isPending ? 'Running...' : 'Run Matcher'}
         </button>
+        <ToolStatusBadge status={matcherStatus} elapsed={matcherElapsed} result={matcherResult} />
       </div>
 
       {/* Cleanup */}
@@ -283,8 +328,9 @@ export default function AdminScraperPage() {
           disabled={cleanupMutation.isPending}
           className="btn btn-danger"
         >
-          {cleanupMutation.isPending ? 'Starting...' : 'Run Cleanup'}
+          {cleanupMutation.isPending ? 'Running...' : 'Run Cleanup'}
         </button>
+        <ToolStatusBadge status={cleanupStatus} elapsed={cleanupElapsed} result={cleanupResult} />
       </div>
     </div>
   )

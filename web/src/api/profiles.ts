@@ -41,6 +41,13 @@ export const profilesApi = {
     return response.data
   },
 
+  importText: async (text: string): Promise<Profile> => {
+    const response = await apiClient.post<Profile>('/profiles/import/text', { text }, {
+      timeout: 300000,
+    })
+    return response.data
+  },
+
   importLinkedIn: async (url: string): Promise<Profile> => {
     const response = await apiClient.post<Profile>('/profiles/import/linkedin', { url }, {
       timeout: 60000,

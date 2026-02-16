@@ -21,6 +21,7 @@ export default function AdminPipelinePage() {
 
   // Scheduler form state
   const [intervalHours, setIntervalHours] = useState(24)
+  const [startTime, setStartTime] = useState('')
   const [selectedSteps, setSelectedSteps] = useState<string[]>([...STEPS])
   const [messages, setMessages] = useState<{ type: 'success' | 'error'; text: string }[]>([])
 
@@ -81,7 +82,7 @@ export default function AdminPipelinePage() {
   })
 
   const schedulerMutation = useMutation({
-    mutationFn: (enabled: boolean) => adminApi.updateScheduler(enabled, intervalHours),
+    mutationFn: (enabled: boolean) => adminApi.updateScheduler(enabled, intervalHours, startTime || undefined),
     onSuccess: (data) => {
       addMessage('success', data.message)
       queryClient.invalidateQueries({ queryKey: ['pipeline-status'] })
@@ -166,16 +167,54 @@ export default function AdminPipelinePage() {
           </div>
 
           <div className="space-y-4">
-            <div>
-              <label className="label">Interval (hours)</label>
-              <input
-                type="number"
-                value={intervalHours}
-                onChange={(e) => setIntervalHours(parseFloat(e.target.value) || 24)}
-                className="input w-32"
-                min={0.5}
-                step={0.5}
-              />
+            <div className="flex gap-4">
+              <div>
+                <label className="label">Interval (hours)</label>
+                <input
+                  type="number"
+                  value={intervalHours}
+                  onChange={(e) => setIntervalHours(parseFloat(e.target.value) || 24)}
+                  className="input w-32"
+                  min={0.5}
+                  step={0.5}
+                />
+              </div>
+              <div>
+                <label className="label">Run daily at (optional)</label>
+                <div className="flex items-center gap-1">
+                  <select
+                    value={startTime ? startTime.split(':')[0] : ''}
+                    onChange={(e) => {
+                      if (!e.target.value) { setStartTime(''); return }
+                      const min = startTime ? startTime.split(':')[1] : '00'
+                      setStartTime(`${e.target.value}:${min}`)
+                    }}
+                    className="input w-20"
+                  >
+                    <option value="">--</option>
+                    {Array.from({ length: 24 }, (_, i) => (
+                      <option key={i} value={i.toString().padStart(2, '0')}>
+                        {i === 0 ? '12 AM' : i < 12 ? `${i} AM` : i === 12 ? '12 PM' : `${i - 12} PM`}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-gray-400 font-medium">:</span>
+                  <select
+                    value={startTime ? startTime.split(':')[1] : ''}
+                    onChange={(e) => {
+                      const hr = startTime ? startTime.split(':')[0] : '09'
+                      setStartTime(`${hr}:${e.target.value}`)
+                    }}
+                    className="input w-20"
+                    disabled={!startTime}
+                  >
+                    <option value="00">00</option>
+                    <option value="15">15</option>
+                    <option value="30">30</option>
+                    <option value="45">45</option>
+                  </select>
+                </div>
+              </div>
             </div>
 
             {status?.next_run && status.scheduler_enabled && (

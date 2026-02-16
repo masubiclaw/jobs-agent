@@ -559,6 +559,16 @@ IMPORTANT:
 
         return self._create_profile_from_parsed(user_id, parsed)
 
+    def import_from_text(self, user_id: str, text: str) -> Optional[ProfileResponse]:
+        """Import a profile from plain text resume content."""
+        logger.info(f"Parsing {len(text)} chars of plain text with LLM...")
+        parsed = self._parse_resume_with_llm(text)
+        if not parsed:
+            logger.error("LLM failed to parse resume text")
+            return None
+
+        return self._create_profile_from_parsed(user_id, parsed)
+
     def import_from_linkedin(self, user_id: str, linkedin_url: str) -> Optional[ProfileResponse]:
         """Import a profile from a LinkedIn profile URL."""
         try:

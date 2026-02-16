@@ -269,6 +269,7 @@ class PipelineRunRequest(BaseModel):
 class PipelineSchedulerUpdate(BaseModel):
     enabled: bool
     interval_hours: float = 24.0
+    start_time: Optional[str] = None  # HH:MM format, e.g. "09:00"
 
 
 class LinkedInImportRequest(BaseModel):

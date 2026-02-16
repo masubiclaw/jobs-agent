@@ -127,13 +127,28 @@ class PipelineService:
             "total_docs_generated": sum(r.get("docs_generated", 0) for r in runs),
         }
 
-    def start_scheduler(self, interval_hours: float, user_id: Optional[str] = None):
+    def start_scheduler(self, interval_hours: float, user_id: Optional[str] = None, start_time: Optional[str] = None):
         self._scheduler_enabled = True
         self._interval_hours = interval_hours
         if user_id:
             self._user_id = user_id
-        self._next_run = datetime.now() + timedelta(hours=interval_hours)
-        self._add_log("INFO", f"Scheduler started with {interval_hours}h interval")
+
+        if start_time:
+            # Parse HH:MM and schedule first run at that time today (or tomorrow if past)
+            try:
+                hour, minute = map(int, start_time.split(":"))
+                now = datetime.now()
+                next_run = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                if next_run <= now:
+                    next_run += timedelta(days=1)
+                self._next_run = next_run
+                self._add_log("INFO", f"Scheduler started with {interval_hours}h interval, first run at {start_time}")
+            except (ValueError, AttributeError):
+                self._next_run = datetime.now() + timedelta(hours=interval_hours)
+                self._add_log("WARNING", f"Invalid start_time '{start_time}', using interval offset")
+        else:
+            self._next_run = datetime.now() + timedelta(hours=interval_hours)
+            self._add_log("INFO", f"Scheduler started with {interval_hours}h interval")
 
         if self._scheduler_task and not self._scheduler_task.done():
             self._scheduler_task.cancel()

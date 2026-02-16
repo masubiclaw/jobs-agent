@@ -232,11 +232,11 @@ async def update_scheduler(
     """Enable/disable pipeline scheduler and set interval."""
     service = get_pipeline_service()
     if update.enabled:
-        service.start_scheduler(update.interval_hours, user_id=current_user.id)
-        return {
-            "status": "enabled",
-            "message": f"Scheduler enabled with {update.interval_hours}h interval"
-        }
+        service.start_scheduler(update.interval_hours, user_id=current_user.id, start_time=update.start_time)
+        msg = f"Scheduler enabled with {update.interval_hours}h interval"
+        if update.start_time:
+            msg += f", starting at {update.start_time}"
+        return {"status": "enabled", "message": msg}
     else:
         service.stop_scheduler()
         return {"status": "disabled", "message": "Scheduler stopped"}

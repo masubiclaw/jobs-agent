@@ -91,6 +91,36 @@ async def import_profile_from_pdf(
     return profile
 
 
+@router.post("/import/text", response_model=ProfileResponse, status_code=status.HTTP_201_CREATED)
+async def import_profile_from_text(
+    request: dict,
+    current_user: UserResponse = Depends(get_current_user),
+    service: ProfileService = Depends(get_profile_service)
+) -> ProfileResponse:
+    """Import a profile from plain text resume content."""
+    text = request.get("text", "").strip()
+    if not text or len(text) < 50:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please provide at least 50 characters of resume text."
+        )
+
+    if len(text) > 50000:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Text too long. Maximum 50,000 characters."
+        )
+
+    profile = service.import_from_text(current_user.id, text)
+    if not profile:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to parse resume text. Make sure Ollama is running."
+        )
+
+    return profile
+
+
 @router.post("/import/linkedin", response_model=ProfileResponse, status_code=status.HTTP_201_CREATED)
 async def import_profile_from_linkedin(
     request: LinkedInImportRequest,

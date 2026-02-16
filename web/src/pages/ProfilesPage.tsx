@@ -1,18 +1,21 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { profilesApi } from '../api'
 import {
   Plus, User, Check, Trash2, Upload, Linkedin,
-  CheckCircle, AlertCircle, FileText,
+  CheckCircle, AlertCircle, FileText, ClipboardPaste,
 } from 'lucide-react'
 
 export default function ProfilesPage() {
   const queryClient = useQueryClient()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [linkedInUrl, setLinkedInUrl] = useState('')
-  const [importTab, setImportTab] = useState<'pdf' | 'linkedin'>('pdf')
+  const [importTab, setImportTab] = useState<'pdf' | 'text' | 'linkedin'>('pdf')
+  const [pasteText, setPasteText] = useState('')
   const [importMessage, setImportMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const pdfStartTimeRef = useRef<number | null>(null)
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
 
   const showMessage = (type: 'success' | 'error', text: string) => {
     setImportMessage({ type, text })
@@ -61,6 +64,52 @@ export default function ProfilesPage() {
       showMessage('error', err?.response?.data?.detail || 'Failed to import from LinkedIn. Try downloading your profile as PDF instead.')
     },
   })
+
+  const textMutation = useMutation({
+    mutationFn: profilesApi.importText,
+    onSuccess: (profile) => {
+      showMessage('success', `Profile "${profile.name}" imported from text with ${profile.skills.length} skills and ${profile.experience.length} experiences`)
+      queryClient.invalidateQueries({ queryKey: ['profiles'] })
+      setPasteText('')
+    },
+    onError: (err: any) => {
+      showMessage('error', err?.response?.data?.detail || 'Failed to parse resume text. Make sure Ollama is running.')
+    },
+  })
+
+  // Track elapsed time during PDF upload
+  useEffect(() => {
+    if (pdfMutation.isPending) {
+      pdfStartTimeRef.current = Date.now()
+      setElapsedSeconds(0)
+      const interval = setInterval(() => {
+        if (pdfStartTimeRef.current) {
+          setElapsedSeconds(Math.floor((Date.now() - pdfStartTimeRef.current) / 1000))
+        }
+      }, 1000)
+      return () => clearInterval(interval)
+    } else {
+      pdfStartTimeRef.current = null
+      setElapsedSeconds(0)
+    }
+  }, [pdfMutation.isPending])
+
+  // Warn before navigating away during PDF upload
+  useEffect(() => {
+    if (!pdfMutation.isPending) return
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [pdfMutation.isPending])
+
+  const formatElapsed = (seconds: number) => {
+    const m = Math.floor(seconds / 60)
+    const s = seconds % 60
+    return `${m}m ${s.toString().padStart(2, '0')}s`
+  }
 
   const handlePdfUpload = () => {
     const file = fileInputRef.current?.files?.[0]
@@ -124,6 +173,17 @@ export default function ProfilesPage() {
             PDF Resume
           </button>
           <button
+            onClick={() => setImportTab('text')}
+            className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 ${
+              importTab === 'text'
+                ? 'bg-primary-50 text-primary-700 border border-primary-200'
+                : 'text-gray-500 hover:bg-gray-50'
+            }`}
+          >
+            <ClipboardPaste size={16} />
+            Paste Text
+          </button>
+          <button
             onClick={() => setImportTab('linkedin')}
             className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 ${
               importTab === 'linkedin'
@@ -155,6 +215,29 @@ export default function ProfilesPage() {
               {pdfMutation.isPending ? 'Parsing...' : 'Upload & Import'}
             </button>
           </div>
+        ) : importTab === 'text' ? (
+          <div className="space-y-2">
+            <label className="label">Paste your resume text</label>
+            <textarea
+              value={pasteText}
+              onChange={(e) => setPasteText(e.target.value)}
+              className="input"
+              rows={6}
+              placeholder="Paste your resume content here..."
+            />
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-gray-400">
+                Minimum 50 characters. Copy &amp; paste from any document, email, or website.
+              </p>
+              <button
+                onClick={() => textMutation.mutate(pasteText)}
+                disabled={textMutation.isPending || pasteText.trim().length < 50}
+                className="btn btn-primary whitespace-nowrap"
+              >
+                {textMutation.isPending ? 'Parsing...' : 'Import Text'}
+              </button>
+            </div>
+          </div>
         ) : (
           <div className="space-y-2">
             <div className="flex items-end gap-4">
@@ -182,10 +265,23 @@ export default function ProfilesPage() {
           </div>
         )}
 
-        {(pdfMutation.isPending || linkedInMutation.isPending) && (
+        {(pdfMutation.isPending || textMutation.isPending || linkedInMutation.isPending) && (
           <div className="mt-3 flex items-center gap-2 text-sm text-gray-500">
             <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary-600" />
-            Parsing with AI... this may take up to 2 minutes.
+            <div>
+              <div>
+                {pdfMutation.isPending
+                  ? 'Parsing resume with local AI — this typically takes 3-5 minutes. Please don\'t navigate away.'
+                  : textMutation.isPending
+                  ? 'Parsing resume text with local AI — this typically takes 3-5 minutes. Please don\'t navigate away.'
+                  : 'Importing from LinkedIn...'}
+              </div>
+              {pdfMutation.isPending && (
+                <div className="text-xs text-gray-400 mt-1">
+                  Elapsed: {formatElapsed(elapsedSeconds)}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>

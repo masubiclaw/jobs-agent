@@ -66,11 +66,17 @@ export default function AdminJobsPage() {
                       <span className="font-medium text-gray-900">{job.title}</span>
                     </td>
                     <td className="px-4 py-3 text-gray-600">{job.company}</td>
-                    <td className="px-4 py-3 text-gray-600">{job.location}</td>
+                    <td className="px-4 py-3 text-gray-600">
+                      {job.location && job.location.toLowerCase() !== 'unknown' ? job.location : '—'}
+                    </td>
                     <td className="px-4 py-3">
-                      <span className="px-2 py-1 bg-gray-100 rounded text-xs capitalize">
-                        {job.platform}
-                      </span>
+                      {job.platform && job.platform.toLowerCase() !== 'unknown' ? (
+                        <span className="px-2 py-1 bg-gray-100 rounded text-xs capitalize">
+                          {job.platform}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-gray-500 text-sm">
                       {new Date(job.cached_at).toLocaleDateString()}

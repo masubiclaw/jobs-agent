@@ -37,7 +37,7 @@ export default function Layout() {
 
   const adminItems = user?.is_admin ? [
     { to: '/admin', icon: Shield, label: 'Admin' },
-    { to: '/admin/pipeline', icon: Workflow, label: 'Auto-Match' },
+    { to: '/admin/pipeline', icon: Workflow, label: 'Pipeline' },
     { to: '/admin/scraper', icon: Settings, label: 'System Tools' },
     { to: '/admin/jobs', icon: Briefcase, label: 'All Jobs' },
   ] : []

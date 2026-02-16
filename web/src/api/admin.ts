@@ -70,8 +70,8 @@ export const adminApi = {
     return response.data
   },
 
-  updateScheduler: async (enabled: boolean, interval_hours: number): Promise<{ status: string; message: string }> => {
-    const response = await apiClient.post('/admin/pipeline/scheduler', { enabled, interval_hours })
+  updateScheduler: async (enabled: boolean, interval_hours: number, start_time?: string): Promise<{ status: string; message: string }> => {
+    const response = await apiClient.post('/admin/pipeline/scheduler', { enabled, interval_hours, start_time })
     return response.data
   },
 

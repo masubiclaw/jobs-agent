@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { profilesApi } from '../api'
 import { Profile, ProfileUpdate, Skill, Experience, Preferences } from '../types'
-import { ArrowLeft, Plus, Trash2, Save, CheckCircle, AlertCircle } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, Save, CheckCircle, AlertCircle, Pencil, X } from 'lucide-react'
 
 export default function ProfileFormPage() {
   const { id } = useParams()
@@ -30,6 +30,7 @@ export default function ProfileFormPage() {
 
   const [experience, setExperience] = useState<Experience[]>([])
   const [newExp, setNewExp] = useState({ title: '', company: '', start_date: '', end_date: '', description: '' })
+  const [editingExpIndex, setEditingExpIndex] = useState<number | null>(null)
 
   const [preferences, setPreferences] = useState<Preferences>({
     target_roles: [],
@@ -136,13 +137,81 @@ export default function ProfileFormPage() {
 
   const addExperience = () => {
     if (newExp.title.trim() && newExp.company.trim()) {
-      setExperience([...experience, { ...newExp, added_at: new Date().toISOString() }])
+      if (editingExpIndex !== null) {
+        // Update existing entry
+        setExperience(experience.map((exp, i) =>
+          i === editingExpIndex ? { ...newExp, added_at: exp.added_at } : exp
+        ))
+        setEditingExpIndex(null)
+      } else {
+        // Append new entry
+        setExperience([...experience, { ...newExp, added_at: new Date().toISOString() }])
+      }
       setNewExp({ title: '', company: '', start_date: '', end_date: '', description: '' })
     }
   }
 
+  const startEditExperience = (index: number) => {
+    const exp = experience[index]
+    setNewExp({
+      title: exp.title,
+      company: exp.company,
+      start_date: exp.start_date,
+      end_date: exp.end_date || '',
+      description: exp.description || '',
+    })
+    setEditingExpIndex(index)
+  }
+
+  const cancelEditExperience = () => {
+    setEditingExpIndex(null)
+    setNewExp({ title: '', company: '', start_date: '', end_date: '', description: '' })
+  }
+
   const removeExperience = (index: number) => {
     setExperience(experience.filter((_, i) => i !== index))
+    // If we were editing this entry, cancel the edit
+    if (editingExpIndex === index) {
+      cancelEditExperience()
+    } else if (editingExpIndex !== null && index < editingExpIndex) {
+      setEditingExpIndex(editingExpIndex - 1)
+    }
+  }
+
+  /** Render a description string as bullet-point list items and paragraphs */
+  const renderDescription = (description: string) => {
+    const lines = description.split('\n').filter(line => line.trim() !== '')
+    const elements: JSX.Element[] = []
+    let currentListItems: string[] = []
+
+    const flushList = () => {
+      if (currentListItems.length > 0) {
+        elements.push(
+          <ul key={`ul-${elements.length}`} className="list-disc list-inside mt-1 space-y-0.5">
+            {currentListItems.map((item, i) => (
+              <li key={i}>{item}</li>
+            ))}
+          </ul>
+        )
+        currentListItems = []
+      }
+    }
+
+    for (const line of lines) {
+      const bulletMatch = line.match(/^\s*(?:[-*\u2022])\s+(.*)/)
+      const numberedMatch = line.match(/^\s*\d+\.\s+(.*)/)
+      if (bulletMatch) {
+        currentListItems.push(bulletMatch[1])
+      } else if (numberedMatch) {
+        currentListItems.push(numberedMatch[1])
+      } else {
+        flushList()
+        elements.push(<p key={`p-${elements.length}`} className="mt-1">{line}</p>)
+      }
+    }
+    flushList()
+
+    return <div className="text-sm text-gray-500 mt-1">{elements}</div>
   }
 
   if (isLoading) {
@@ -332,8 +401,17 @@ export default function ProfileFormPage() {
                   placeholder="End (or present)"
                 />
                 <button type="button" onClick={addExperience} className="btn btn-secondary flex items-center gap-1">
-                  <Plus size={16} /> Add
+                  {editingExpIndex !== null ? (
+                    <><Save size={16} /> Update</>
+                  ) : (
+                    <><Plus size={16} /> Add</>
+                  )}
                 </button>
+                {editingExpIndex !== null && (
+                  <button type="button" onClick={cancelEditExperience} className="btn btn-secondary flex items-center gap-1 text-gray-500">
+                    <X size={16} /> Cancel
+                  </button>
+                )}
               </div>
               <textarea
                 value={newExp.description}
@@ -347,16 +425,27 @@ export default function ProfileFormPage() {
             {experience.length > 0 && (
               <div className="space-y-2">
                 {experience.map((exp, index) => (
-                  <div key={index} className="flex items-start justify-between p-3 bg-gray-50 rounded-lg">
-                    <div>
+                  <div
+                    key={index}
+                    className={`flex items-start justify-between p-3 rounded-lg cursor-pointer ${
+                      editingExpIndex === index ? 'bg-blue-50 ring-2 ring-blue-300' : 'bg-gray-50 hover:bg-gray-100'
+                    }`}
+                    onClick={() => startEditExperience(index)}
+                  >
+                    <div className="flex-1 min-w-0">
                       <div className="font-medium">{exp.title}</div>
                       <div className="text-sm text-gray-600">{exp.company}</div>
                       <div className="text-xs text-gray-400">{exp.start_date} — {exp.end_date || 'present'}</div>
-                      {exp.description && <div className="text-sm text-gray-500 mt-1">{exp.description}</div>}
+                      {exp.description && renderDescription(exp.description)}
                     </div>
-                    <button type="button" onClick={() => removeExperience(index)} className="text-gray-400 hover:text-red-500 ml-2">
-                      <Trash2 size={16} />
-                    </button>
+                    <div className="flex items-center gap-1 ml-2 flex-shrink-0">
+                      <button type="button" onClick={(e) => { e.stopPropagation(); startEditExperience(index) }} className="text-gray-400 hover:text-blue-500">
+                        <Pencil size={16} />
+                      </button>
+                      <button type="button" onClick={(e) => { e.stopPropagation(); removeExperience(index) }} className="text-gray-400 hover:text-red-500">
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>

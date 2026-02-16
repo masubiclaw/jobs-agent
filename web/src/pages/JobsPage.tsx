@@ -182,11 +182,15 @@ export default function JobsPage() {
                     </div>
                     <p className="text-gray-600">{job.company}</p>
                     <div className="flex items-center gap-4 mt-2 text-sm text-gray-500">
-                      <span>{job.location}</span>
+                      {job.location && job.location.toLowerCase() !== 'unknown' && (
+                        <span>{job.location}</span>
+                      )}
                       {job.salary && job.salary !== 'Not specified' && (
                         <span>{job.salary}</span>
                       )}
-                      <span className="capitalize">{job.platform}</span>
+                      {job.platform && job.platform.toLowerCase() !== 'unknown' && (
+                        <span className="capitalize">{job.platform}</span>
+                      )}
                       {job.notes && (
                         <span className="text-primary-600 italic truncate max-w-[200px]">{job.notes}</span>
                       )}
