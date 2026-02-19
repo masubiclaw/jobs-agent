@@ -7,6 +7,7 @@ Build jobs-agent into a site that **anyone** can use to find jobs. Think of it a
 
 ## Phase 0: Check Existing Issues & User Feedback
 - Read `docs/ISSUES.md` first
+- Remove and previously fixed issues
 - If there are OPEN issues (ISSUE-* or UX-*), fix and verify those before proceeding
 - Check the **User Feedback** section — convert actionable feedback items into ISSUE-* or UX-*
   entries with highest severity, then fix them
@@ -63,6 +64,8 @@ would: "Does this help me find a job faster, or is it just confusing?"
   "85% match" mean anything without context?
 - **Missing polish**: Dead links, placeholder text, inconsistent spacing, truncated content
 - **Call to action**: At every step, is it clear what Jamie should do next?
+
+Persona: "Morgan" — senior QA with UX design background. Tests functionality first, polish second. Has browser DevTools open at all times — console, network tab, application storage. Also has access to server/application logs — stdout, stderr, backend frameworks, database queries. Knows what a clean console looks like, what a 422 vs a 500 means, and can correlate a blank screen to a stack trace in the backend. Reads CORS errors, unhandled promise rejections, and ORM warnings the way normal people read typos. Also notices when a button is 2px off-grid. Treats every silent failure as a bug, every swallowed exception as a lie, and every inconsistency as a smell.
 
 Append findings to `docs/ISSUES.md` with:
 - **ID**: UX-NNN (sequential, separate from ISSUE-NNN)

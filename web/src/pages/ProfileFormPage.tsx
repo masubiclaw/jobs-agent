@@ -66,12 +66,17 @@ export default function ProfileFormPage() {
         location: profile.location,
         notes: profile.notes,
       })
-      setSkills(profile.skills)
-      setExperience(profile.experience)
-      setPreferences(profile.preferences)
-      setRawTargetRoles(profile.preferences.target_roles.join(', '))
-      setRawTargetLocations(profile.preferences.target_locations.join(', '))
-      setRawExcludedCompanies(profile.preferences.excluded_companies.join(', '))
+      setSkills(profile.skills || [])
+      setExperience(profile.experience || [])
+      const prefs = profile.preferences || {
+        target_roles: [], target_locations: [], remote_preference: 'hybrid',
+        salary_min: undefined, salary_max: undefined, job_types: ['full-time'],
+        industries: [], excluded_companies: [],
+      }
+      setPreferences(prefs)
+      setRawTargetRoles((prefs.target_roles || []).join(', '))
+      setRawTargetLocations((prefs.target_locations || []).join(', '))
+      setRawExcludedCompanies((prefs.excluded_companies || []).join(', '))
     }
   }, [profile])
 

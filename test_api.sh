@@ -51,7 +51,7 @@ EMAIL="test_${TS}@example.com"
 # Register
 CODE=$(curl -s -o /tmp/api_test_body -w "%{http_code}" -X POST \
   -H "Content-Type: application/json" \
-  -d "{\"email\":\"$EMAIL\",\"password\":\"TestPass123!\"}" \
+  -d "{\"name\":\"Test User\",\"email\":\"$EMAIL\",\"password\":\"TestPass123!\"}" \
   "$API/auth/register")
 BODY=$(cat /tmp/api_test_body)
 if [ "$CODE" = "201" ] || [ "$CODE" = "200" ]; then
@@ -118,9 +118,9 @@ check "GET /api/jobs/top" "$API/jobs/top"
 
 # --- Admin (may fail if test user isn't admin) ---
 echo ""
-echo "--- Admin ---"
-check "GET /api/admin/stats" "$API/admin/stats"
-check "GET /api/admin/pipeline/status" "$API/admin/pipeline/status"
+echo "--- Admin (test user is not admin, expect 403) ---"
+check "GET /api/admin/stats (non-admin → 403)" "$API/admin/stats" "GET" "" "403"
+check "GET /api/admin/pipeline/status (non-admin → 403)" "$API/admin/pipeline/status" "GET" "" "403"
 
 # --- Summary ---
 echo ""
