@@ -6,7 +6,10 @@ import logging
 import time
 
 import httpx
-from google.adk.tools import FunctionTool
+try:
+    from google.adk.tools import FunctionTool
+except ImportError:
+    FunctionTool = lambda func: func
 
 logger = logging.getLogger(__name__)
 

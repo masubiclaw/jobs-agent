@@ -18,7 +18,7 @@ export interface DocumentListItem {
 
 export const documentsApi = {
   list: async (limit: number = 100): Promise<DocumentListItem[]> => {
-    const response = await apiClient.get<DocumentListItem[]>('/documents/', { params: { limit } })
+    const response = await apiClient.get<DocumentListItem[]>('/documents', { params: { limit } })
     return response.data
   },
 

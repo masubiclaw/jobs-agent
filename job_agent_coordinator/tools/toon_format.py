@@ -202,11 +202,12 @@ def from_toon(text: str) -> Dict[str, Any]:
                 current_item = {}
             else:
                 # New named section
-                # Save any pending list
-                if current_list_name and current_list_data:
+                # Save any pending list (flush current_item first)
+                if current_list_name:
                     if current_item:
                         current_list_data.append(current_item)
-                    result2[current_list_name] = current_list_data
+                    if current_list_data:
+                        result2[current_list_name] = current_list_data
                     current_list_data = []
                     current_item = {}
                 current_list_name = section_name

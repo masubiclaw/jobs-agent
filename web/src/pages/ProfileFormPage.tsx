@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { profilesApi } from '../api'
-import { Profile, ProfileUpdate, Skill, Experience, Preferences } from '../types'
+import { ProfileUpdate, Skill, SkillLevel, Experience, Preferences } from '../types'
 import { ArrowLeft, Plus, Trash2, Save, CheckCircle, AlertCircle, Pencil, X } from 'lucide-react'
 
 export default function ProfileFormPage() {
@@ -26,7 +26,7 @@ export default function ProfileFormPage() {
   })
 
   const [skills, setSkills] = useState<Skill[]>([])
-  const [newSkill, setNewSkill] = useState({ name: '', level: 'intermediate' as const })
+  const [newSkill, setNewSkill] = useState<{ name: string; level: SkillLevel }>({ name: '', level: 'intermediate' })
 
   const [experience, setExperience] = useState<Experience[]>([])
   const [newExp, setNewExp] = useState({ title: '', company: '', start_date: '', end_date: '', description: '' })
@@ -125,7 +125,12 @@ export default function ProfileFormPage() {
         },
       })
     } else {
-      createMutation.mutate(formData)
+      createMutation.mutate({
+        ...formData,
+        skills,
+        experience,
+        preferences: finalPreferences,
+      })
     }
   }
 
@@ -508,6 +513,7 @@ export default function ProfileFormPage() {
                 <div className="flex gap-2">
                   <input
                     type="number"
+                    min="0"
                     value={preferences.salary_min || ''}
                     onChange={(e) =>
                       setPreferences({
@@ -520,6 +526,7 @@ export default function ProfileFormPage() {
                   />
                   <input
                     type="number"
+                    min="0"
                     value={preferences.salary_max || ''}
                     onChange={(e) =>
                       setPreferences({

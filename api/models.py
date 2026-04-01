@@ -87,6 +87,13 @@ class Preferences(BaseModel):
     industries: List[str] = []
     excluded_companies: List[str] = []
 
+    @field_validator('salary_min', 'salary_max')
+    @classmethod
+    def salary_must_be_non_negative(cls, v):
+        if v is not None and v < 0:
+            raise ValueError('Salary cannot be negative')
+        return v
+
 
 class Resume(BaseModel):
     summary: str = ""
@@ -99,6 +106,16 @@ class ProfileCreate(BaseModel):
     email: str = ""
     phone: str = ""
     location: str = ""
+    skills: Optional[List[Skill]] = None
+    experience: Optional[List[Experience]] = None
+    preferences: Optional[Preferences] = None
+
+    @field_validator('name')
+    @classmethod
+    def name_not_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError('Profile name cannot be empty')
+        return v.strip()
 
 
 class ProfileUpdate(BaseModel):

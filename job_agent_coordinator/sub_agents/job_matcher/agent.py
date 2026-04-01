@@ -27,8 +27,12 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional, Tuple
 from bs4 import BeautifulSoup
 
-from google.adk.agents import LlmAgent
-from google.adk.tools import FunctionTool
+try:
+    from google.adk.agents import LlmAgent
+    from google.adk.tools import FunctionTool
+except ImportError:
+    LlmAgent = None
+    FunctionTool = lambda func: func
 
 from .prompt import JOB_MATCHER_PROMPT
 from job_agent_coordinator.tools.profile_store import get_store
@@ -860,13 +864,16 @@ def batch_match(
 analyze_job_match_tool = FunctionTool(func=analyze_job_match)
 
 # Legacy agent (kept for backwards compatibility)
-job_matcher_agent = LlmAgent(
-    name="job_matcher_agent",
-    model=LLM_MODEL,
-    description="Analyzes job descriptions against user profiles with two-pass matching.",
-    instruction=JOB_MATCHER_PROMPT,
-    output_key="job_match_report",
-    tools=[analyze_job_match_tool],
-)
+if LlmAgent is not None:
+    job_matcher_agent = LlmAgent(
+        name="job_matcher_agent",
+        model=LLM_MODEL,
+        description="Analyzes job descriptions against user profiles with two-pass matching.",
+        instruction=JOB_MATCHER_PROMPT,
+        output_key="job_match_report",
+        tools=[analyze_job_match_tool],
+    )
+else:
+    job_matcher_agent = None
 
 logger.info(f"🎯 Job Matcher initialized (model={LLM_MODEL})")

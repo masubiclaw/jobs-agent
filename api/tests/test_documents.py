@@ -134,19 +134,19 @@ class TestDocumentList:
 
     def test_list_documents_requires_auth(self, client: TestClient):
         """Test that listing documents requires authentication."""
-        response = client.get("/api/documents/")
+        response = client.get("/api/documents")
         assert response.status_code in (401, 403)
 
     def test_list_documents_empty(self, client: TestClient, auth_headers: dict):
         """Test listing documents when none exist."""
-        response = client.get("/api/documents/", headers=auth_headers)
+        response = client.get("/api/documents", headers=auth_headers)
         assert response.status_code == 200
         assert isinstance(response.json(), list)
 
     def test_list_documents_limit(self, client: TestClient, auth_headers: dict):
         """Test listing documents with limit parameter."""
         response = client.get(
-            "/api/documents/",
+            "/api/documents",
             params={"limit": 5},
             headers=auth_headers
         )

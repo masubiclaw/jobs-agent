@@ -15,8 +15,6 @@ import {
   Plus,
   CheckCircle,
   AlertCircle,
-  RefreshCw,
-  Trash2,
 } from 'lucide-react'
 
 type FilterType = 'all' | 'resume' | 'cover_letter'
@@ -105,6 +103,13 @@ export default function DocumentsPage() {
     })
   }
 
+  const filtered = documents.filter((doc) => {
+    if (typeFilter !== 'all' && doc.document_type !== typeFilter) return false
+    if (reviewFilter === 'reviewed' && !doc.reviewed) return false
+    if (reviewFilter === 'unreviewed' && doc.reviewed) return false
+    return true
+  })
+
   const toggleSelectAll = () => {
     if (selectedDocs.size === filtered.length) {
       setSelectedDocs(new Set())
@@ -112,13 +117,6 @@ export default function DocumentsPage() {
       setSelectedDocs(new Set(filtered.map(d => d.id)))
     }
   }
-
-  const filtered = documents.filter((doc) => {
-    if (typeFilter !== 'all' && doc.document_type !== typeFilter) return false
-    if (reviewFilter === 'reviewed' && !doc.reviewed) return false
-    if (reviewFilter === 'unreviewed' && doc.reviewed) return false
-    return true
-  })
 
   const formatDate = (iso: string) => {
     if (!iso) return ''
@@ -309,7 +307,7 @@ export default function DocumentsPage() {
                 </div>
                 <div className="text-sm text-gray-500 flex items-center gap-3 mt-0.5">
                   <span>{doc.job_company || 'Unknown Company'}</span>
-                  {doc.overall_score > 0 && (
+                  {typeof doc.overall_score === 'number' && doc.overall_score > 0 && (
                     <span className="text-xs bg-gray-100 px-1.5 py-0.5 rounded">
                       Score: {doc.overall_score.toFixed(0)}%
                     </span>

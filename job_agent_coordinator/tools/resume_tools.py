@@ -8,7 +8,10 @@ import logging
 from typing import Dict, Any, Optional
 from pathlib import Path
 
-from google.adk.tools import FunctionTool
+try:
+    from google.adk.tools import FunctionTool
+except ImportError:
+    FunctionTool = lambda func: func
 
 from .profile_store import get_store
 from .job_cache import get_cache

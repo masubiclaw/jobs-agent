@@ -596,7 +596,10 @@ def get_cache() -> JobCache:
 
 # === FunctionTools for agent use ===
 
-from google.adk.tools import FunctionTool
+try:
+    from google.adk.tools import FunctionTool
+except ImportError:
+    FunctionTool = lambda func: func
 
 
 def cache_job(

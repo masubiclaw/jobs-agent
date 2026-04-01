@@ -56,8 +56,9 @@ class DocumentService:
             try:
                 data = json.loads(index_file.read_text())
                 return data.get("documents", {}) if isinstance(data, dict) else {}
-            except:
-                pass
+            except (json.JSONDecodeError, IOError, OSError) as e:
+                logger.warning(f"Failed to load docs index for user: {e}")
+                return {}
         return {}
 
     def _save_docs_index(self, user_id: str, index: Dict[str, Dict[str, Any]]):
@@ -223,7 +224,7 @@ class DocumentService:
         pdf_path = Path(doc_info["pdf_path"]).resolve()
 
         # Validate path is within allowed directories
-        allowed_dirs = [Path(".job_cache").resolve(), Path("/tmp").resolve()]
+        allowed_dirs = [Path(".job_cache").resolve(), Path("/tmp").resolve(), Path("generated_documents").resolve()]
         if not any(str(pdf_path).startswith(str(d)) for d in allowed_dirs):
             logger.warning(f"Path traversal attempt blocked: {pdf_path}")
             return None

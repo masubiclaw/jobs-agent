@@ -185,11 +185,16 @@ class ProfileService:
         name: str,
         email: str = "",
         phone: str = "",
-        location: str = ""
+        location: str = "",
+        skills: Optional[list] = None,
+        experience: Optional[list] = None,
+        preferences: Optional[dict] = None,
     ) -> Optional[ProfileResponse]:
         """Create a new profile."""
-        # Generate ID
-        profile_id = name.lower().replace(" ", "_").replace(".", "")[:20]
+        # Generate ID — strip all non-alphanumeric chars except underscores/hyphens
+        import re as _re
+        sanitized = _re.sub(r'[^a-z0-9_-]', '', name.lower().replace(" ", "_"))[:20]
+        profile_id = sanitized if sanitized else "profile"
         
         # Check if exists
         existing = self._load_profile(user_id, profile_id)
@@ -209,11 +214,11 @@ class ProfileService:
             "location": location,
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),
-            "skills": [],
-            "experience": [],
+            "skills": [s.dict() if hasattr(s, 'dict') else s for s in skills] if skills else [],
+            "experience": [e.dict() if hasattr(e, 'dict') else e for e in experience] if experience else [],
             "education": [],
             "certifications": [],
-            "preferences": {
+            "preferences": (preferences.dict() if hasattr(preferences, 'dict') else preferences) if preferences else {
                 "target_roles": [],
                 "target_locations": [],
                 "remote_preference": "hybrid",

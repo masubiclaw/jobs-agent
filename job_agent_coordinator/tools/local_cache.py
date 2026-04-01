@@ -7,7 +7,10 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
-from google.adk.tools import FunctionTool
+try:
+    from google.adk.tools import FunctionTool
+except ImportError:
+    FunctionTool = lambda func: func
 
 from .toon_format import to_toon, from_toon
 

@@ -99,5 +99,8 @@ if LLM_MODEL.startswith("ollama/"):
 
 _setup_litellm_logging()
 
-from . import agent  # noqa: F401
-logger.info("✅ Job Agent ready")
+try:
+    from . import agent  # noqa: F401
+    logger.info("✅ Job Agent ready")
+except ImportError as e:
+    logger.warning(f"⚠️ Agent module not loaded (missing dependency): {e}")

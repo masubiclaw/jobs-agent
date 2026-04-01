@@ -1,11 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import type { 
-  User, 
-  Profile, 
-  Job, 
-  JobStatus, 
+import type {
+  User,
+  Job,
+  JobStatus,
   SkillLevel,
-  RemotePreference 
+  RemotePreference
 } from '../types'
 
 describe('Types', () => {

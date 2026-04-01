@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useParams, useNavigate, Link } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { jobsApi, documentsApi } from '../api'
 import { JobStatus } from '../types'
@@ -38,6 +38,7 @@ export default function JobDetailPage() {
   const queryClient = useQueryClient()
   const [isGenerating, setIsGenerating] = useState(false)
   const [generationStatus, setGenerationStatus] = useState('')
+  const [generationIsError, setGenerationIsError] = useState(false)
   const [editingNotes, setEditingNotes] = useState(false)
   const [notesValue, setNotesValue] = useState('')
 
@@ -74,6 +75,7 @@ export default function JobDetailPage() {
   const handleGenerate = async (type: 'resume' | 'cover_letter' | 'package') => {
     if (!id) return
     setIsGenerating(true)
+    setGenerationIsError(false)
     const labels = { resume: 'resume', cover_letter: 'cover letter', package: 'resume + cover letter' }
     setGenerationStatus(`Generating ${labels[type]}...`)
     try {
@@ -111,6 +113,7 @@ export default function JobDetailPage() {
       setGenerationStatus('Documents generated successfully!')
       queryClient.invalidateQueries({ queryKey: ['documents'] })
     } catch (err: unknown) {
+      setGenerationIsError(true)
       const error = err as { response?: { data?: { detail?: string } } }
       const msg = error?.response?.data?.detail || ''
       if (msg.toLowerCase().includes('ollama') || msg.toLowerCase().includes('connection')) {
@@ -304,8 +307,7 @@ export default function JobDetailPage() {
         </div>
         {generationStatus && (
           <p className={`mt-3 text-sm ${
-            generationStatus.includes('failed') || generationStatus.includes('Failed')
-              ? 'text-red-600' : 'text-gray-600'
+            generationIsError ? 'text-red-600' : 'text-gray-600'
           }`}>
             {generationStatus}
           </p>
@@ -423,7 +425,7 @@ export default function JobDetailPage() {
           <div>
             <dt className="text-gray-500">Added On</dt>
             <dd className="font-medium">
-              {new Date(job.cached_at).toLocaleDateString()}
+              {job.cached_at ? new Date(job.cached_at).toLocaleDateString() : 'Unknown'}
             </dd>
           </div>
         </dl>

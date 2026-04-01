@@ -168,11 +168,19 @@ class PipelineService:
     async def _scheduler_loop(self):
         try:
             while self._scheduler_enabled:
-                wait_seconds = self._interval_hours * 3600
-                self._next_run = datetime.now() + timedelta(seconds=wait_seconds)
+                # On first iteration, honour _next_run set by start_scheduler
+                # (e.g. from start_time). On subsequent iterations, schedule
+                # the next run relative to now.
+                if self._next_run and self._next_run > datetime.now():
+                    wait_seconds = (self._next_run - datetime.now()).total_seconds()
+                else:
+                    wait_seconds = self._interval_hours * 3600
+                    self._next_run = datetime.now() + timedelta(seconds=wait_seconds)
                 self._add_log("INFO", f"Next run scheduled at {self._next_run.isoformat()}")
 
                 await asyncio.sleep(wait_seconds)
+                # Clear so next iteration recalculates from interval
+                self._next_run = None
 
                 if self._scheduler_enabled and not self._is_running:
                     await self._execute_pipeline(
@@ -450,8 +458,8 @@ class PipelineService:
                     level = result.get("match_level", "weak")
                     if level in ("strong", "good"):
                         good_matches += 1
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Match failed for job {job.get('id', '?')}: {e}")
 
             return good_matches
         except Exception as e:
@@ -474,8 +482,10 @@ class PipelineService:
                     )
                     if result and "[error]" not in str(result).lower():
                         generated += 1
-                except Exception:
-                    pass
+                    else:
+                        self._add_log("WARN", f"Generate returned error for job {job_id}")
+                except Exception as e:
+                    self._add_log("WARN", f"Generate failed for job {job_id}: {e}")
 
             return generated
         except Exception as e:

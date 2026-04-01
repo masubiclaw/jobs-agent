@@ -20,7 +20,7 @@ def get_document_service() -> DocumentService:
 
 
 @router.post("/resume", response_model=DocumentResponse)
-async def generate_resume(
+def generate_resume(
     request: DocumentRequest,
     current_user: UserResponse = Depends(get_current_user),
     service: DocumentService = Depends(get_document_service)
@@ -45,7 +45,7 @@ async def generate_resume(
 
 
 @router.post("/cover-letter", response_model=DocumentResponse)
-async def generate_cover_letter(
+def generate_cover_letter(
     request: DocumentRequest,
     current_user: UserResponse = Depends(get_current_user),
     service: DocumentService = Depends(get_document_service)
@@ -68,7 +68,7 @@ async def generate_cover_letter(
 
 
 @router.post("/package", response_model=dict)
-async def generate_application_package(
+def generate_application_package(
     request: DocumentRequest,
     current_user: UserResponse = Depends(get_current_user),
     service: DocumentService = Depends(get_document_service)

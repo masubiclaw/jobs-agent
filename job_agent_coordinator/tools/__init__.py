@@ -1,178 +1,110 @@
-"""Tools for the job search agent."""
+"""Tools for the job search agent.
 
-from .jobspy_tools import (
-    search_jobs_with_jobspy,
-    search_jobs_tool,
-    JOBSPY_AVAILABLE,
-)
+Imports are deferred to avoid requiring google.adk when only using
+individual tool modules (e.g. toon_format, job_cache).
+"""
 
-from .prompt_to_search_params import (
-    prompt_to_search_params,
-    prompt_to_search_params_tool,
-)
 
-from .local_cache import (
-    get_cache as get_local_cache,
-    LocalCache,
-    get_exclusions,
-    add_exclusion,
-    remove_exclusion,
-    get_cached_jobs,
-    get_cache_stats as get_local_cache_stats,
-    get_exclusions_tool,
-    add_exclusion_tool,
-    remove_exclusion_tool,
-    get_cached_jobs_tool,
-    get_cache_stats_tool as get_local_cache_stats_tool,
-)
+def __getattr__(name):
+    """Lazy import: only load submodules when their exports are accessed."""
+    import importlib
 
-from .job_cache import (
-    JobCache,
-    get_cache as get_job_cache,
-    cache_job,
-    search_cached_jobs,
-    get_cache_stats,
-    clear_job_cache,
-    remove_company_from_cache,
-    cache_job_tool,
-    search_cached_jobs_tool,
-    get_cache_stats_tool,
-    clear_job_cache_tool,
-    remove_company_tool,
-    # Match caching
-    cache_job_match,
-    get_cached_match,
-    list_cached_matches,
-    clear_cached_matches,
-    aggregate_job_matches,
-    cache_job_match_tool,
-    get_cached_match_tool,
-    list_cached_matches_tool,
-    clear_cached_matches_tool,
-    aggregate_job_matches_tool,
-)
+    _MODULE_MAP = {
+        # jobspy_tools
+        "search_jobs_with_jobspy": ".jobspy_tools",
+        "search_jobs_tool": ".jobspy_tools",
+        "JOBSPY_AVAILABLE": ".jobspy_tools",
+        # prompt_to_search_params
+        "prompt_to_search_params": ".prompt_to_search_params",
+        "prompt_to_search_params_tool": ".prompt_to_search_params",
+        # local_cache
+        "get_local_cache": ".local_cache",
+        "LocalCache": ".local_cache",
+        "get_exclusions": ".local_cache",
+        "add_exclusion": ".local_cache",
+        "remove_exclusion": ".local_cache",
+        "get_cached_jobs": ".local_cache",
+        "get_local_cache_stats": ".local_cache",
+        "get_exclusions_tool": ".local_cache",
+        "add_exclusion_tool": ".local_cache",
+        "remove_exclusion_tool": ".local_cache",
+        "get_cached_jobs_tool": ".local_cache",
+        "get_local_cache_stats_tool": ".local_cache",
+        # job_cache
+        "JobCache": ".job_cache",
+        "get_job_cache": ".job_cache",
+        "cache_job": ".job_cache",
+        "search_cached_jobs": ".job_cache",
+        "get_cache_stats": ".job_cache",
+        "clear_job_cache": ".job_cache",
+        "remove_company_from_cache": ".job_cache",
+        "cache_job_tool": ".job_cache",
+        "search_cached_jobs_tool": ".job_cache",
+        "get_cache_stats_tool": ".job_cache",
+        "clear_job_cache_tool": ".job_cache",
+        "remove_company_tool": ".job_cache",
+        "cache_job_match": ".job_cache",
+        "get_cached_match": ".job_cache",
+        "list_cached_matches": ".job_cache",
+        "clear_cached_matches": ".job_cache",
+        "aggregate_job_matches": ".job_cache",
+        "cache_job_match_tool": ".job_cache",
+        "get_cached_match_tool": ".job_cache",
+        "list_cached_matches_tool": ".job_cache",
+        "clear_cached_matches_tool": ".job_cache",
+        "aggregate_job_matches_tool": ".job_cache",
+        # profile_store
+        "ProfileStore": ".profile_store",
+        "get_profile_store": ".profile_store",
+        "create_profile": ".profile_store",
+        "get_profile": ".profile_store",
+        "update_profile": ".profile_store",
+        "add_skill_to_profile": ".profile_store",
+        "set_job_preferences": ".profile_store",
+        "set_resume_summary": ".profile_store",
+        "get_search_context": ".profile_store",
+        "list_all_profiles": ".profile_store",
+        "create_profile_tool": ".profile_store",
+        "get_profile_tool": ".profile_store",
+        "update_profile_tool": ".profile_store",
+        "add_skill_tool": ".profile_store",
+        "set_preferences_tool": ".profile_store",
+        "set_resume_tool": ".profile_store",
+        "get_search_context_tool": ".profile_store",
+        "list_profiles_tool": ".profile_store",
+        # job_links_scraper
+        "parse_markdown_links": ".job_links_scraper",
+        "scrape_webpage": ".job_links_scraper",
+        "scrape_job_links": ".job_links_scraper",
+        "scrape_single_source": ".job_links_scraper",
+        "get_links_summary": ".job_links_scraper",
+        "scrape_job_links_tool": ".job_links_scraper",
+        "get_links_summary_tool": ".job_links_scraper",
+        "scrape_single_source_tool": ".job_links_scraper",
+        "parse_markdown_links_tool": ".job_links_scraper",
+        # resume_tools
+        "generate_resume": ".resume_tools",
+        "generate_cover_letter": ".resume_tools",
+        "generate_application_package": ".resume_tools",
+        "generate_resume_tool": ".resume_tools",
+        "generate_cover_letter_tool": ".resume_tools",
+        "generate_application_package_tool": ".resume_tools",
+    }
 
-from .profile_store import (
-    ProfileStore,
-    get_store as get_profile_store,
-    create_profile,
-    get_profile,
-    update_profile,
-    add_skill_to_profile,
-    set_job_preferences,
-    set_resume_summary,
-    get_search_context,
-    list_all_profiles,
-    create_profile_tool,
-    get_profile_tool,
-    update_profile_tool,
-    add_skill_tool,
-    set_preferences_tool,
-    set_resume_tool,
-    get_search_context_tool,
-    list_profiles_tool,
-)
+    if name in _MODULE_MAP:
+        mod = importlib.import_module(_MODULE_MAP[name], __package__)
+        # Handle renamed imports
+        real_name = name
+        if name == "get_local_cache":
+            real_name = "get_cache"
+        elif name == "get_local_cache_stats":
+            real_name = "get_cache_stats"
+        elif name == "get_local_cache_stats_tool":
+            real_name = "get_cache_stats_tool"
+        elif name == "get_job_cache":
+            real_name = "get_cache"
+        elif name == "get_profile_store":
+            real_name = "get_store"
+        return getattr(mod, real_name)
 
-from .job_links_scraper import (
-    parse_markdown_links,
-    scrape_webpage,
-    scrape_job_links,
-    scrape_single_source,
-    get_links_summary,
-    scrape_job_links_tool,
-    get_links_summary_tool,
-    scrape_single_source_tool,
-    parse_markdown_links_tool,
-)
-
-from .resume_tools import (
-    generate_resume,
-    generate_cover_letter,
-    generate_application_package,
-    generate_resume_tool,
-    generate_cover_letter_tool,
-    generate_application_package_tool,
-)
-
-__all__ = [
-    # JobSpy
-    "search_jobs_with_jobspy",
-    "search_jobs_tool",
-    "JOBSPY_AVAILABLE",
-    # Prompt parser
-    "prompt_to_search_params",
-    "prompt_to_search_params_tool",
-    # Local cache (exclusions)
-    "get_local_cache",
-    "LocalCache",
-    "get_exclusions",
-    "add_exclusion",
-    "remove_exclusion",
-    "get_cached_jobs",
-    "get_local_cache_stats",
-    "get_exclusions_tool",
-    "add_exclusion_tool",
-    "remove_exclusion_tool",
-    "get_cached_jobs_tool",
-    "get_local_cache_stats_tool",
-    # Job cache (vector search)
-    "JobCache",
-    "get_job_cache",
-    "cache_job",
-    "search_cached_jobs",
-    "get_cache_stats",
-    "clear_job_cache",
-    "remove_company_from_cache",
-    "cache_job_tool",
-    "search_cached_jobs_tool",
-    "get_cache_stats_tool",
-    "clear_job_cache_tool",
-    "remove_company_tool",
-    # Match caching
-    "cache_job_match",
-    "get_cached_match",
-    "list_cached_matches",
-    "clear_cached_matches",
-    "aggregate_job_matches",
-    "cache_job_match_tool",
-    "get_cached_match_tool",
-    "list_cached_matches_tool",
-    "clear_cached_matches_tool",
-    "aggregate_job_matches_tool",
-    # Profile store
-    "ProfileStore",
-    "get_profile_store",
-    "create_profile",
-    "get_profile",
-    "update_profile",
-    "add_skill_to_profile",
-    "set_job_preferences",
-    "set_resume_summary",
-    "get_search_context",
-    "list_all_profiles",
-    "create_profile_tool",
-    "get_profile_tool",
-    "update_profile_tool",
-    "add_skill_tool",
-    "set_preferences_tool",
-    "set_resume_tool",
-    "get_search_context_tool",
-    "list_profiles_tool",
-    # Job links scraper
-    "parse_markdown_links",
-    "scrape_webpage",
-    "scrape_job_links",
-    "scrape_single_source",
-    "get_links_summary",
-    "scrape_job_links_tool",
-    "get_links_summary_tool",
-    "scrape_single_source_tool",
-    "parse_markdown_links_tool",
-    # Resume/Cover Letter tools
-    "generate_resume",
-    "generate_cover_letter",
-    "generate_application_package",
-    "generate_resume_tool",
-    "generate_cover_letter_tool",
-    "generate_application_package_tool",
-]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

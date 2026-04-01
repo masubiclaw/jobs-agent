@@ -14,7 +14,10 @@ from datetime import datetime
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
-from google.adk.tools import FunctionTool
+try:
+    from google.adk.tools import FunctionTool
+except ImportError:
+    FunctionTool = lambda func: func
 
 from .job_cache import get_cache
 

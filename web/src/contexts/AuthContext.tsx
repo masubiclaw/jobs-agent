@@ -22,9 +22,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (token) {
       loadUser()
     } else {
-      setIsLoading(false)
+      // No token — auto-login as default admin to bypass login screen
+      autoLogin()
     }
   }, [])
+
+  const autoLogin = async () => {
+    try {
+      const { access_token } = await authApi.autoLogin()
+      localStorage.setItem('auth_token', access_token)
+      await loadUser()
+    } catch {
+      // Auto-login failed — fall back to normal login flow
+      setIsLoading(false)
+    }
+  }
 
   const loadUser = async () => {
     try {

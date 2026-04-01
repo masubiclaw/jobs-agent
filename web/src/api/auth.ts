@@ -12,6 +12,11 @@ export const authApi = {
     return response.data
   },
 
+  autoLogin: async (): Promise<AuthToken> => {
+    const response = await apiClient.post<AuthToken>('/auth/auto-login')
+    return response.data
+  },
+
   getMe: async (): Promise<User> => {
     const response = await apiClient.get<User>('/auth/me')
     return response.data

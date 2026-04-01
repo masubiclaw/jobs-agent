@@ -412,5 +412,86 @@ BS Computer Science | Berkeley | 2008
             assert page_count == 1, f"Dense resume should still be 1 page (with style adjustment), got {page_count}"
 
 
+class TestDocumentServicePdfPathValidation:
+    """Tests for PDF path validation in DocumentService.get_document_pdf()."""
+
+    def test_generated_documents_dir_is_allowed(self):
+        """PDF paths in generated_documents/ should be allowed by path validation."""
+        import sys
+        import json
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        from api.services.document_service import DocumentService
+
+        svc = DocumentService()
+
+        # Create a test PDF in generated_documents/
+        gen_dir = Path("generated_documents")
+        gen_dir.mkdir(exist_ok=True)
+        test_pdf = gen_dir / "_test_path_validation.pdf"
+        create_test_pdf(str(test_pdf), num_pages=1)
+
+        try:
+            # Create a fake user docs index with the PDF path
+            test_user = "_test_path_validation_user"
+            svc._save_docs_index(test_user, {
+                "test_doc_1": {
+                    "id": "test_doc_1",
+                    "pdf_path": str(test_pdf),
+                    "job_id": "j1",
+                    "profile_id": "p1",
+                    "document_type": "resume",
+                }
+            })
+
+            result = svc.get_document_pdf("test_doc_1", test_user)
+            assert result is not None, (
+                "get_document_pdf returned None for a valid PDF in generated_documents/. "
+                "The generated_documents/ dir must be in allowed_dirs."
+            )
+            assert result.exists()
+            assert result.suffix == ".pdf"
+        finally:
+            test_pdf.unlink(missing_ok=True)
+            # Clean up test index
+            index_file = svc._docs_index_file(test_user)
+            index_file.unlink(missing_ok=True)
+            index_file.parent.rmdir()
+            index_file.parent.parent.rmdir()
+
+    def test_disallowed_dir_is_blocked(self):
+        """PDF paths outside allowed dirs should be blocked."""
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        from api.services.document_service import DocumentService
+
+        svc = DocumentService()
+
+        # Create a test PDF in a non-allowed directory
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False, dir='.') as f:
+            test_pdf = Path(f.name)
+            create_test_pdf(str(test_pdf), num_pages=1)
+
+        try:
+            test_user = "_test_blocked_path_user"
+            svc._save_docs_index(test_user, {
+                "test_doc_2": {
+                    "id": "test_doc_2",
+                    "pdf_path": "/etc/passwd",
+                    "job_id": "j1",
+                    "profile_id": "p1",
+                    "document_type": "resume",
+                }
+            })
+
+            result = svc.get_document_pdf("test_doc_2", test_user)
+            assert result is None, "Path traversal to /etc/passwd should be blocked"
+        finally:
+            test_pdf.unlink(missing_ok=True)
+            index_file = svc._docs_index_file(test_user)
+            index_file.unlink(missing_ok=True)
+            index_file.parent.rmdir()
+            index_file.parent.parent.rmdir()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

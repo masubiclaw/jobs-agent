@@ -45,8 +45,8 @@ class JobService:
             try:
                 data = json.loads(meta_file.read_text())
                 return data.get("jobs", {}) if isinstance(data, dict) else {}
-            except:
-                pass
+            except (json.JSONDecodeError, IOError, OSError) as e:
+                logger.warning("Failed to load user job metadata: %s", e)
         return {}
 
     def _save_user_job_metadata(self, user_id: str, metadata: Dict[str, Dict[str, Any]]):
@@ -131,18 +131,18 @@ class JobService:
         sort_by: Optional[str] = None,
     ) -> JobListResponse:
         """List jobs with filters, sorting, and pagination."""
-        # Get all jobs from cache
+        # Get all jobs from cache (no limit — filtering + pagination applied below)
         if semantic and query:
-            all_jobs = self._cache.semantic_search(query, limit=500)
+            all_jobs = self._cache.semantic_search(query, limit=10000)
         elif query or company or location:
             all_jobs = self._cache.search(
                 query=query or "",
                 company=company or "",
                 location=location or "",
-                limit=500
+                limit=10000
             )
         else:
-            all_jobs = self._cache.list_all(limit=500)
+            all_jobs = self._cache.list_all(limit=10000)
 
         # Load user metadata
         user_meta = self._load_user_job_metadata(user_id)
@@ -234,7 +234,7 @@ class JobService:
             added_by = JobAddMethod.MANUAL
         
         # Method 3: Direct fields
-        elif job_data.title and job_data.company:
+        elif job_data.title and job_data.title.strip() and job_data.company and job_data.company.strip():
             job = {
                 "title": job_data.title,
                 "company": job_data.company,

@@ -42,7 +42,10 @@ async def create_profile(
         name=profile_data.name,
         email=profile_data.email,
         phone=profile_data.phone,
-        location=profile_data.location
+        location=profile_data.location,
+        skills=profile_data.skills,
+        experience=profile_data.experience,
+        preferences=profile_data.preferences,
     )
     
     if not profile:

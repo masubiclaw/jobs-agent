@@ -38,10 +38,21 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+DEFAULT_ADMIN_EMAIL = "admin@jobsagent.local"
+DEFAULT_ADMIN_PASSWORD = "admin1234"
+DEFAULT_ADMIN_NAME = "Admin"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     logger.info("Starting Jobs Agent API...")
+    # Seed default admin user if no users exist
+    from api.auth import get_user_store
+    store = get_user_store()
+    if store.count() == 0:
+        store.create(email=DEFAULT_ADMIN_EMAIL, password=DEFAULT_ADMIN_PASSWORD, name=DEFAULT_ADMIN_NAME)
+        logger.info("Created default admin user: %s", DEFAULT_ADMIN_EMAIL)
     yield
     logger.info("Shutting down Jobs Agent API...")
 
@@ -65,8 +76,10 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",  # React dev server
+        "http://localhost:3001",  # Vite dev server (alt port)
         "http://localhost:5173",  # Vite dev server
         "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
         "http://127.0.0.1:5173",
     ],
     allow_credentials=True,
@@ -109,15 +122,39 @@ app.include_router(admin_router, prefix="/api")
 
 
 # Root endpoint
-@app.get("/", tags=["Root"])
-async def root():
-    """Root endpoint with API information."""
+@app.get("/api/info", tags=["Root"])
+async def api_info():
+    """API information endpoint."""
     return {
         "name": "Jobs Agent API",
         "version": "0.1.0",
         "docs": "/api/docs",
         "health": "/api/health"
     }
+
+# Serve the React frontend from web/dist/
+import os
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+_web_dist = Path(__file__).parent.parent / "web" / "dist"
+if _web_dist.exists():
+    # Serve static assets (JS, CSS, images)
+    app.mount("/assets", StaticFiles(directory=str(_web_dist / "assets")), name="static-assets")
+
+    @app.get("/{full_path:path}", tags=["Frontend"])
+    async def serve_frontend(full_path: str):
+        """Serve the React SPA — all non-API routes return index.html."""
+        # Don't serve frontend for API routes
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not Found")
+        # Check if it's a static file
+        file_path = _web_dist / full_path
+        if file_path.is_file():
+            return FileResponse(str(file_path))
+        # SPA fallback — return index.html for all other routes
+        return FileResponse(str(_web_dist / "index.html"))
 
 
 if __name__ == "__main__":
