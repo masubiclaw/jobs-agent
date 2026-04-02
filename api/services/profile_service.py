@@ -442,20 +442,15 @@ IMPORTANT:
 - Output ONLY valid JSON, no explanations"""
 
         try:
-            url = OLLAMA_BASE_URL.rstrip("/") + "/api/generate"
-            response = requests.post(
-                url,
-                json={
-                    "model": PARSER_MODEL,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {"temperature": 0.1},
-                },
+            from job_agent_coordinator.services.llm_queue import llm_request, Priority
+            result = llm_request(
+                request_type="resume_parse",
+                model=PARSER_MODEL,
+                prompt=prompt,
+                options={"temperature": 0.1},
                 timeout=LLM_TIMEOUT,
+                priority=Priority.USER_INTERACTIVE,
             )
-            response.raise_for_status()
-
-            result = response.json().get("response", "")
             json_match = re.search(r'\{[\s\S]*\}', result)
             if json_match:
                 return json.loads(json_match.group())

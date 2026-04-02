@@ -89,6 +89,11 @@ export const adminApi = {
     const response = await apiClient.get('/admin/pipeline/stats')
     return response.data
   },
+
+  getLLMQueueStats: async (): Promise<LLMQueueStats> => {
+    const response = await apiClient.get('/admin/llm-queue/stats')
+    return response.data
+  },
 }
 
 // Pipeline types
@@ -128,4 +133,34 @@ export interface PipelineStats {
   total_jobs_found: number
   total_jobs_matched: number
   total_docs_generated: number
+}
+
+export interface LLMQueueTypeStats {
+  count: number
+  avg_duration: number
+  avg_wait: number
+  success_rate: number
+}
+
+export interface LLMQueueRecentEntry {
+  type: string
+  model: string
+  priority: number
+  duration: number
+  wait: number
+  success: boolean
+  error: string | null
+  finished_at: string
+}
+
+export interface LLMQueueStats {
+  queue_depth: number
+  in_flight: number
+  total_requests: number
+  total_success: number
+  total_failures: number
+  avg_duration_seconds: number
+  avg_queue_wait_seconds: number
+  by_type: Record<string, LLMQueueTypeStats>
+  recent: LLMQueueRecentEntry[]
 }

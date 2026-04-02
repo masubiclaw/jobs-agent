@@ -196,21 +196,17 @@ Important:
 JSON:"""
 
     try:
+        from job_agent_coordinator.services.llm_queue import llm_request, Priority
         start = time.time()
-        response = requests.post(
-            f"{OLLAMA_BASE_URL}/api/generate",
-            json={
-                "model": SCRAPER_MODEL,
-                "prompt": prompt,
-                "stream": False,
-                "options": {"temperature": 0, "num_predict": 4000}
-            },
-            timeout=LLM_TIMEOUT
+        result = llm_request(
+            request_type="job_extract",
+            model=SCRAPER_MODEL,
+            prompt=prompt,
+            options={"temperature": 0, "num_predict": 4000},
+            timeout=LLM_TIMEOUT,
+            priority=Priority.PIPELINE,
         )
-        response.raise_for_status()
         elapsed = time.time() - start
-        
-        result = response.json().get("response", "{}")
         
         # Extract JSON from response
         json_match = re.search(r'\{[\s\S]*\}', result)

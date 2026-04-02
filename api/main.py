@@ -53,6 +53,11 @@ async def lifespan(app: FastAPI):
     if store.count() == 0:
         store.create(email=DEFAULT_ADMIN_EMAIL, password=DEFAULT_ADMIN_PASSWORD, name=DEFAULT_ADMIN_NAME)
         logger.info("Created default admin user: %s", DEFAULT_ADMIN_EMAIL)
+    # Start LLM request queue (must be before pipeline scheduler)
+    from job_agent_coordinator.services.llm_queue import get_queue
+    llm_queue = get_queue()
+    llm_queue.start()
+    logger.info("LLM request queue started")
     # Auto-start the pipeline scheduler
     from api.services.pipeline_service import get_pipeline_service
     pipeline = get_pipeline_service()
@@ -60,6 +65,7 @@ async def lifespan(app: FastAPI):
         pipeline.start_scheduler(interval_hours=24.0)
         logger.info("Pipeline scheduler auto-started (24h interval)")
     yield
+    llm_queue.stop()
     logger.info("Shutting down Jobs Agent API...")
 
 

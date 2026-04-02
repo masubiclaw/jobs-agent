@@ -266,3 +266,12 @@ async def get_pipeline_stats(
 ) -> dict:
     """Get aggregated pipeline stats."""
     return get_pipeline_service().get_stats()
+
+
+@router.get("/llm-queue/stats")
+async def get_llm_queue_stats(
+    current_user: UserResponse = Depends(get_current_admin_user),
+) -> dict:
+    """Get LLM request queue stats for observability."""
+    from job_agent_coordinator.services.llm_queue import get_queue
+    return get_queue().get_stats()

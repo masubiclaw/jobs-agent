@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 # Configuration
 OLLAMA_BASE_URL = os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma3:12b")
-LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", 120))
+LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", 300))
 
 # Length constraints
 RESUME_MIN_WORDS = 400  # Resume should have enough content to fill a page
@@ -278,23 +278,16 @@ class CritiqueResult:
 
 
 def _call_ollama(prompt: str, temperature: float = 0.1) -> str:
-    """Call Ollama API for analysis."""
-    try:
-        response = requests.post(
-            f"{OLLAMA_BASE_URL}/api/generate",
-            json={
-                "model": OLLAMA_MODEL,
-                "prompt": prompt,
-                "stream": False,
-                "options": {"temperature": temperature, "num_predict": 1500}
-            },
-            timeout=LLM_TIMEOUT
-        )
-        response.raise_for_status()
-        return response.json().get("response", "").strip()
-    except Exception as e:
-        logger.error(f"Ollama API error: {e}")
-        raise
+    """Call Ollama API for analysis via the centralized LLM queue."""
+    from job_agent_coordinator.services.llm_queue import llm_request, Priority
+    return llm_request(
+        request_type="critique",
+        model=OLLAMA_MODEL,
+        prompt=prompt,
+        options={"temperature": temperature, "num_predict": 1500},
+        timeout=LLM_TIMEOUT,
+        priority=Priority.USER_INTERACTIVE,
+    ).strip()
 
 
 def _extract_profile_facts(profile: Dict[str, Any]) -> Dict[str, List[str]]:

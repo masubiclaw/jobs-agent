@@ -255,27 +255,20 @@ def has_template_artifacts(content: str) -> Tuple[bool, List[str]]:
 # Configuration
 OLLAMA_BASE_URL = os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma3:12b")
-LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", 180))  # Longer timeout for document generation
+LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", 300))  # Longer timeout for document generation
 
 
 def _call_ollama(prompt: str, temperature: float = 0.3) -> str:
-    """Call Ollama API for text generation."""
-    try:
-        response = requests.post(
-            f"{OLLAMA_BASE_URL}/api/generate",
-            json={
-                "model": OLLAMA_MODEL,
-                "prompt": prompt,
-                "stream": False,
-                "options": {"temperature": temperature, "num_predict": 2000}
-            },
-            timeout=LLM_TIMEOUT
-        )
-        response.raise_for_status()
-        return response.json().get("response", "").strip()
-    except Exception as e:
-        logger.error(f"Ollama API error: {e}")
-        raise
+    """Call Ollama API for text generation via the centralized LLM queue."""
+    from job_agent_coordinator.services.llm_queue import llm_request, Priority
+    return llm_request(
+        request_type="doc_gen",
+        model=OLLAMA_MODEL,
+        prompt=prompt,
+        options={"temperature": temperature, "num_predict": 2000},
+        timeout=LLM_TIMEOUT,
+        priority=Priority.USER_INTERACTIVE,
+    ).strip()
 
 
 def _format_profile_for_prompt(profile: Dict[str, Any]) -> str:

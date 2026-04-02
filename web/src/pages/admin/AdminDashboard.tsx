@@ -1,20 +1,27 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { adminApi } from '../../api'
-import { 
-  Briefcase, 
-  Users, 
-  Database, 
-  Search, 
-  RefreshCw, 
+import { adminApi, LLMQueueStats } from '../../api'
+import {
+  Briefcase,
+  Users,
+  Database,
+  Search,
+  RefreshCw,
   Trash2,
-  ArrowRight 
+  ArrowRight,
+  Cpu
 } from 'lucide-react'
 
 export default function AdminDashboard() {
   const { data: stats, isLoading } = useQuery({
     queryKey: ['adminStats'],
     queryFn: adminApi.getStats,
+  })
+
+  const { data: llmStats } = useQuery({
+    queryKey: ['llmQueueStats'],
+    queryFn: adminApi.getLLMQueueStats,
+    refetchInterval: 5000,
   })
 
   if (isLoading) {
@@ -158,6 +165,104 @@ export default function AdminDashboard() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* LLM Queue */}
+      {llmStats && (
+        <div className="card">
+          <div className="flex items-center gap-2 mb-4">
+            <Cpu size={20} className="text-purple-600" />
+            <h2 className="text-lg font-semibold">LLM Queue</h2>
+            {llmStats.in_flight > 0 && (
+              <span className="ml-2 px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-xs font-medium animate-pulse">Processing</span>
+            )}
+          </div>
+
+          {/* Queue summary */}
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+            <div>
+              <p className="text-sm text-gray-500">Queue Depth</p>
+              <p className={`text-2xl font-bold ${llmStats.queue_depth > 5 ? 'text-red-600' : llmStats.queue_depth > 0 ? 'text-yellow-600' : 'text-green-600'}`}>
+                {llmStats.queue_depth}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">In Flight</p>
+              <p className="text-2xl font-bold">{llmStats.in_flight}</p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">Total Requests</p>
+              <p className="text-2xl font-bold">{llmStats.total_requests}</p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">Avg Duration</p>
+              <p className="text-2xl font-bold">{llmStats.avg_duration_seconds}s</p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">Avg Wait</p>
+              <p className="text-2xl font-bold">{llmStats.avg_queue_wait_seconds}s</p>
+            </div>
+          </div>
+
+          {/* By type breakdown */}
+          {Object.keys(llmStats.by_type).length > 0 && (
+            <div className="mb-6">
+              <h3 className="text-sm font-medium text-gray-500 mb-2">By Request Type</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-200">
+                      <th className="text-left py-2 pr-4 font-medium text-gray-500">Type</th>
+                      <th className="text-right py-2 px-4 font-medium text-gray-500">Count</th>
+                      <th className="text-right py-2 px-4 font-medium text-gray-500">Avg Duration</th>
+                      <th className="text-right py-2 px-4 font-medium text-gray-500">Avg Wait</th>
+                      <th className="text-right py-2 pl-4 font-medium text-gray-500">Success Rate</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(llmStats.by_type).map(([type, data]) => (
+                      <tr key={type} className="border-b border-gray-100">
+                        <td className="py-2 pr-4 font-medium capitalize">{type.replace('_', ' ')}</td>
+                        <td className="py-2 px-4 text-right">{data.count}</td>
+                        <td className="py-2 px-4 text-right">{data.avg_duration}s</td>
+                        <td className="py-2 px-4 text-right">{data.avg_wait}s</td>
+                        <td className="py-2 pl-4 text-right">
+                          <span className={data.success_rate >= 0.95 ? 'text-green-600' : data.success_rate >= 0.8 ? 'text-yellow-600' : 'text-red-600'}>
+                            {(data.success_rate * 100).toFixed(0)}%
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Recent requests */}
+          {llmStats.recent.length > 0 && (
+            <div>
+              <h3 className="text-sm font-medium text-gray-500 mb-2">Recent Requests</h3>
+              <div className="space-y-1 max-h-48 overflow-y-auto">
+                {llmStats.recent.map((entry, i) => (
+                  <div key={i} className="flex items-center gap-3 text-xs py-1 border-b border-gray-50">
+                    <span className={`w-2 h-2 rounded-full ${entry.success ? 'bg-green-400' : 'bg-red-400'}`} />
+                    <span className="capitalize font-medium w-24">{entry.type.replace('_', ' ')}</span>
+                    <span className="text-gray-500">{entry.duration}s</span>
+                    <span className="text-gray-400">wait {entry.wait}s</span>
+                    <span className="text-gray-400 ml-auto">{new Date(entry.finished_at).toLocaleTimeString()}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {llmStats.total_failures > 0 && (
+            <div className="mt-3 text-sm text-red-600">
+              {llmStats.total_failures} failed request{llmStats.total_failures > 1 ? 's' : ''} of {llmStats.total_requests} total
+            </div>
+          )}
         </div>
       )}
 

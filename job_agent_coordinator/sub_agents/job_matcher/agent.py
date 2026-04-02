@@ -399,39 +399,33 @@ assessment: [2-3 sentence holistic evaluation citing specific job requirements a
 Output ONLY the TOON format above, no other text."""
 
     try:
-        # Use MLX model if configured, otherwise use Ollama
+        # Use MLX model if configured, otherwise use Ollama via queue
         if USE_MLX_MODEL:
             logger.debug("Using MLX model for LLM analysis")
             result = _mlx_generate(prompt, max_tokens=800)
         else:
-            response = requests.post(
-                f"{OLLAMA_BASE_URL}/api/generate",
-                json={
-                    "model": FAST_MODEL,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {"temperature": 0.3, "num_predict": 800}
-                },
-                timeout=LLM_TIMEOUT
-            )
-            response.raise_for_status()
-            result = response.json().get("response", "").strip()
-        
+            from job_agent_coordinator.services.llm_queue import llm_request, Priority
+            result = llm_request(
+                request_type="match",
+                model=FAST_MODEL,
+                prompt=prompt,
+                options={"temperature": 0.3, "num_predict": 800},
+                timeout=LLM_TIMEOUT,
+                priority=Priority.PIPELINE,
+            ).strip()
+
         # Extract score
         score_match = re.search(r'score:\s*(\d+)%?', result)
         llm_score = int(score_match.group(1)) if score_match else 50
         llm_score = max(0, min(100, llm_score))  # Clamp to 0-100
-        
+
         return {
             "llm_score": llm_score,
             "match_level": _determine_level(llm_score),
             "toon_report": result,
             "llm_success": True,
         }
-        
-    except requests.exceptions.Timeout:
-        logger.warning(f"⚠️ LLM timeout for {job_title[:30]}")
-        return {"llm_score": None, "llm_success": False, "error": "timeout"}
+
     except Exception as e:
         logger.warning(f"⚠️ LLM error: {e}")
         return {"llm_score": None, "llm_success": False, "error": str(e)}
