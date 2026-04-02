@@ -5,6 +5,7 @@ Supports Indeed, LinkedIn, Glassdoor, and other job boards using Playwright
 for JavaScript rendering and LLM for structured data extraction.
 """
 
+import json
 import logging
 import os
 import re
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 # LLM configuration
 OLLAMA_BASE_URL = os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
 SCRAPER_MODEL = os.getenv("OLLAMA_FAST_MODEL", "gemma3:12b")
-LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", 120))
+LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", 300))
 
 # Browser configuration
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -217,7 +218,6 @@ JSON:"""
             logger.error("No JSON found in LLM response")
             return None
         
-        import json
         json_str = json_match.group()
         
         # Clean control characters that break JSON parsing

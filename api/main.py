@@ -53,6 +53,12 @@ async def lifespan(app: FastAPI):
     if store.count() == 0:
         store.create(email=DEFAULT_ADMIN_EMAIL, password=DEFAULT_ADMIN_PASSWORD, name=DEFAULT_ADMIN_NAME)
         logger.info("Created default admin user: %s", DEFAULT_ADMIN_EMAIL)
+    # Auto-start the pipeline scheduler
+    from api.services.pipeline_service import get_pipeline_service
+    pipeline = get_pipeline_service()
+    if not pipeline._scheduler_enabled:
+        pipeline.start_scheduler(interval_hours=24.0)
+        logger.info("Pipeline scheduler auto-started (24h interval)")
     yield
     logger.info("Shutting down Jobs Agent API...")
 

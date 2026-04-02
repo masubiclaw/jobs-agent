@@ -1,15 +1,65 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { jobsApi } from '../api'
-import { Star, ExternalLink } from 'lucide-react'
+import { Star, ExternalLink, X, Filter } from 'lucide-react'
 
 export default function TopJobsPage() {
   const [minScore, setMinScore] = useState(0)
+  const [excludeFilter, setExcludeFilter] = useState('')
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const queryClient = useQueryClient()
 
   const { data: jobs, isLoading } = useQuery({
     queryKey: ['topJobs', minScore],
     queryFn: () => jobsApi.getTop(50, minScore),
+  })
+
+  const excludeMutation = useMutation({
+    mutationFn: async (jobIds: string[]) => {
+      await Promise.all(
+        jobIds.map((id) => jobsApi.update(id, { status: 'archived' as any }))
+      )
+    },
+    onSuccess: () => {
+      setSelectedIds(new Set())
+      queryClient.invalidateQueries({ queryKey: ['topJobs'] })
+    },
+  })
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const selectAllFiltered = () => {
+    if (!filteredJobs) return
+    const allSelected = filteredJobs.every((j) => selectedIds.has(j.id))
+    if (allSelected) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(filteredJobs.map((j) => j.id)))
+    }
+  }
+
+  const excludeSelected = () => {
+    if (selectedIds.size === 0) return
+    excludeMutation.mutate(Array.from(selectedIds))
+  }
+
+  // Filter jobs by company/title/location text
+  const filteredJobs = jobs?.filter((job) => {
+    if (!excludeFilter) return true
+    const q = excludeFilter.toLowerCase()
+    return (
+      job.title.toLowerCase().includes(q) ||
+      job.company.toLowerCase().includes(q) ||
+      (job.location && job.location.toLowerCase().includes(q))
+    )
   })
 
   return (
@@ -37,18 +87,60 @@ export default function TopJobsPage() {
         </div>
       </div>
 
+      {/* Filter & exclude bar */}
+      <div className="card flex flex-wrap items-center gap-3">
+        <Filter size={16} className="text-gray-400" />
+        <input
+          type="text"
+          placeholder="Filter by company, title, or location..."
+          value={excludeFilter}
+          onChange={(e) => setExcludeFilter(e.target.value)}
+          className="input flex-1 min-w-[200px]"
+        />
+        {filteredJobs && filteredJobs.length > 0 && (
+          <button
+            onClick={selectAllFiltered}
+            className="btn btn-secondary text-sm"
+          >
+            {filteredJobs.every((j) => selectedIds.has(j.id))
+              ? 'Deselect All'
+              : `Select All (${filteredJobs.length})`}
+          </button>
+        )}
+        {selectedIds.size > 0 && (
+          <button
+            onClick={excludeSelected}
+            disabled={excludeMutation.isPending}
+            className="btn btn-danger text-sm flex items-center gap-1"
+          >
+            <X size={14} />
+            {excludeMutation.isPending
+              ? 'Excluding...'
+              : `Exclude ${selectedIds.size} job${selectedIds.size > 1 ? 's' : ''}`}
+          </button>
+        )}
+      </div>
+
       {isLoading ? (
         <div className="flex items-center justify-center h-64">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
         </div>
-      ) : jobs && jobs.length > 0 ? (
+      ) : filteredJobs && filteredJobs.length > 0 ? (
         <div className="space-y-4">
-          {jobs.map((job, index) => (
+          {filteredJobs.map((job, index) => (
             <div
               key={job.id}
-              className="card hover:shadow-md transition-shadow"
+              className={`card hover:shadow-md transition-shadow ${
+                selectedIds.has(job.id) ? 'ring-2 ring-red-400' : ''
+              }`}
             >
               <div className="flex items-start gap-4">
+                <input
+                  type="checkbox"
+                  checked={selectedIds.has(job.id)}
+                  onChange={() => toggleSelect(job.id)}
+                  className="mt-3 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                />
                 <div className={`flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center text-white font-bold ${
                   job.match?.combined_score && job.match.combined_score >= 80
                     ? 'bg-green-500'
@@ -137,7 +229,9 @@ export default function TopJobsPage() {
             No matches found
           </h3>
           <p className="text-gray-500">
-            {minScore > 0
+            {excludeFilter
+              ? 'No jobs match your filter.'
+              : minScore > 0
               ? `No jobs match with ${minScore}%+ score. Try lowering the threshold.`
               : 'Run the job matcher to analyze jobs against your profile.'}
           </p>
