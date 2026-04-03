@@ -115,8 +115,26 @@ class JobCache:
                 key   TEXT PRIMARY KEY,
                 value TEXT
             );
+
+            -- FTS5 for ranked full-text search (standalone, not content-sync)
+            CREATE VIRTUAL TABLE IF NOT EXISTS jobs_fts USING fts5(
+                job_id UNINDEXED, title, company, location, description
+            );
         """)
         self._conn.commit()
+
+        # Rebuild FTS index if out of sync
+        fts_count = self._conn.execute("SELECT COUNT(*) FROM jobs_fts").fetchone()[0]
+        jobs_count = self._count_table("jobs")
+        if jobs_count > 0 and (fts_count == 0 or abs(fts_count - jobs_count) > jobs_count * 0.1):
+            logger.info(f"Rebuilding FTS index ({fts_count} fts vs {jobs_count} jobs)...")
+            self._conn.execute("DELETE FROM jobs_fts")
+            self._conn.execute("""
+                INSERT INTO jobs_fts(job_id, title, company, location, description)
+                SELECT id, title, company, location, description FROM jobs
+            """)
+            self._conn.commit()
+            logger.info(f"FTS index rebuilt: {self._conn.execute('SELECT COUNT(*) FROM jobs_fts').fetchone()[0]} entries")
 
     def _count_table(self, table: str) -> int:
         row = self._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
@@ -334,6 +352,14 @@ class JobCache:
             except Exception:
                 pass
 
+        # FTS index
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO jobs_fts(job_id, title, company, location, description) VALUES (?,?,?,?,?)",
+                (job_id, job.get("title",""), job.get("company",""), job.get("location",""), job.get("description","")),
+            )
+            self._conn.commit()
+
         logger.info(f"💾 Cached: {job.get('title','?')[:40]} @ {job.get('company','?')[:20]}")
         return True
 
@@ -377,13 +403,15 @@ class JobCache:
 
     def get(self, job_id: str) -> Optional[Dict[str, Any]]:
         """Get a job by ID."""
-        row = self._conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
-        return self._row_to_dict(row) if row else None
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+            return self._row_to_dict(row) if row else None
 
     def get_by_url(self, url: str) -> Optional[Dict[str, Any]]:
         """Get a job by URL."""
-        row = self._conn.execute("SELECT * FROM jobs WHERE url=?", (url,)).fetchone()
-        return self._row_to_dict(row) if row else None
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM jobs WHERE url=?", (url,)).fetchone()
+            return self._row_to_dict(row) if row else None
 
     def update_job(self, job_id: str, **fields) -> bool:
         """Update specific fields of an existing job."""
@@ -395,16 +423,27 @@ class JobCache:
             return False
         set_clause = ", ".join(f"{k}=?" for k in updates)
         values = list(updates.values()) + [job_id]
+        fts_fields = {"title", "company", "location", "description"}
         with self._lock:
             cur = self._conn.execute(
                 f"UPDATE jobs SET {set_clause} WHERE id=?", values
             )
+            # Update FTS if any indexed field changed
+            if cur.rowcount > 0 and updates.keys() & fts_fields:
+                job = self._conn.execute("SELECT title, company, location, description FROM jobs WHERE id=?", (job_id,)).fetchone()
+                if job:
+                    self._conn.execute("DELETE FROM jobs_fts WHERE job_id=?", (job_id,))
+                    self._conn.execute(
+                        "INSERT INTO jobs_fts(job_id, title, company, location, description) VALUES (?,?,?,?,?)",
+                        (job_id, job[0], job[1], job[2], job[3]),
+                    )
             self._conn.commit()
             return cur.rowcount > 0
 
     def remove(self, job_id: str) -> bool:
-        """Remove a job by ID (cascades to matches)."""
+        """Remove a job by ID (cascades to matches, cleans FTS)."""
         with self._lock:
+            self._conn.execute("DELETE FROM jobs_fts WHERE job_id=?", (job_id,))
             cur = self._conn.execute("DELETE FROM jobs WHERE id=?", (job_id,))
             self._conn.commit()
         if cur.rowcount > 0:
@@ -419,6 +458,7 @@ class JobCache:
 
     def remove_company(self, company: str) -> int:
         """Remove all jobs from a company."""
+        ids = []
         with self._lock:
             rows = self._conn.execute(
                 "SELECT id FROM jobs WHERE LOWER(company) LIKE ?",
@@ -462,14 +502,22 @@ class JobCache:
         platform: str = "",
         limit: int = 20,
     ) -> List[Dict[str, Any]]:
-        """Search jobs by keyword (title/company/description), company, location, platform."""
+        """Search jobs using FTS5 ranked search with company-name boost.
+
+        Results are ranked by relevance: exact company matches first,
+        then title matches, then description matches.
+        """
+        # If we have a free-text query, use FTS5 for ranked results
+        if query and not company and not location and not platform:
+            return self._fts_search(query, limit)
+
+        # For structured filters (company/location/platform), use LIKE
         conditions = []
         params: list = []
 
         if query:
-            q = f"%{query.lower()}%"
-            conditions.append("(LOWER(title) LIKE ? OR LOWER(company) LIKE ? OR LOWER(description) LIKE ?)")
-            params.extend([q, q, q])
+            # Still use FTS for the text part, join with filters
+            return self._fts_search_with_filters(query, company, location, platform, limit)
         if company:
             conditions.append("LOWER(company) LIKE ?")
             params.append(f"%{company.lower()}%")
@@ -484,8 +532,113 @@ class JobCache:
         sql = f"SELECT * FROM jobs WHERE {where} ORDER BY cached_at DESC LIMIT ?"
         params.append(limit)
 
-        rows = self._conn.execute(sql, params).fetchall()
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
         return [self._row_to_dict(r) for r in rows]
+
+    def _fts_search(self, query: str, limit: int = 20) -> List[Dict[str, Any]]:
+        """FTS5 ranked search with company-name boosting.
+
+        Ranking strategy:
+        - Exact company match gets highest boost (weight 10)
+        - Title match gets medium boost (weight 5)
+        - Location match gets small boost (weight 2)
+        - Description match gets base weight (weight 1)
+        """
+        # Escape FTS special characters and build query
+        fts_query = self._build_fts_query(query)
+
+        try:
+            # Use bm25 ranking: job_id(unindexed)=0, title=5, company=10, location=2, description=1
+            sql = """
+                SELECT j.*, bm25(jobs_fts, 0, 5.0, 10.0, 2.0, 1.0) AS rank
+                FROM jobs_fts f
+                JOIN jobs j ON j.id = f.job_id
+                WHERE jobs_fts MATCH ?
+                ORDER BY rank
+                LIMIT ?
+            """
+            with self._lock:
+                rows = self._conn.execute(sql, (fts_query, limit)).fetchall()
+            return [self._row_to_dict(r) for r in rows]
+        except Exception as e:
+            logger.warning(f"FTS search failed, falling back to LIKE: {e}")
+            # Fallback to LIKE search (BUG-013: escape LIKE wildcards)
+            escaped = query.lower().replace('%', '\\%').replace('_', '\\_')
+            q = f"%{escaped}%"
+            with self._lock:
+                rows = self._conn.execute(
+                    """SELECT * FROM jobs
+                       WHERE LOWER(title) LIKE ? ESCAPE '\\' OR LOWER(company) LIKE ? ESCAPE '\\' OR LOWER(description) LIKE ? ESCAPE '\\'
+                       ORDER BY
+                           CASE WHEN LOWER(company) LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END,
+                           CASE WHEN LOWER(title) LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END,
+                           cached_at DESC
+                       LIMIT ?""",
+                    (q, q, q, q, q, limit),
+                ).fetchall()
+            return [self._row_to_dict(r) for r in rows]
+
+    def _fts_search_with_filters(
+        self, query: str, company: str = "", location: str = "", platform: str = "", limit: int = 20
+    ) -> List[Dict[str, Any]]:
+        """FTS search combined with structured filters."""
+        fts_query = self._build_fts_query(query)
+
+        conditions = ["jobs_fts MATCH ?"]
+        params: list = [fts_query]
+
+        if company:
+            conditions.append("LOWER(j.company) LIKE ?")
+            params.append(f"%{company.lower()}%")
+        if location:
+            conditions.append("LOWER(j.location) LIKE ?")
+            params.append(f"%{location.lower()}%")
+        if platform:
+            conditions.append("LOWER(j.platform) LIKE ?")
+            params.append(f"%{platform.lower()}%")
+
+        where = " AND ".join(conditions)
+        params.append(limit)
+
+        try:
+            sql = f"""
+                SELECT j.*, bm25(jobs_fts, 0, 5.0, 10.0, 2.0, 1.0) AS rank
+                FROM jobs_fts f
+                JOIN jobs j ON j.id = f.job_id
+                WHERE {where}
+                ORDER BY rank
+                LIMIT ?
+            """
+            with self._lock:
+                rows = self._conn.execute(sql, params).fetchall()
+            return [self._row_to_dict(r) for r in rows]
+        except Exception:
+            # Fallback (BUG-013: escape LIKE wildcards)
+            escaped = query.lower().replace('%', '\\%').replace('_', '\\_')
+            q = f"%{escaped}%"
+            with self._lock:
+                rows = self._conn.execute(
+                    "SELECT * FROM jobs WHERE LOWER(title) LIKE ? ESCAPE '\\' OR LOWER(company) LIKE ? ESCAPE '\\' LIMIT ?",
+                    (q, q, limit),
+                ).fetchall()
+            return [self._row_to_dict(r) for r in rows]
+
+    @staticmethod
+    def _build_fts_query(query: str) -> str:
+        """Build an FTS5 query from user input.
+
+        Handles multi-word queries by quoting terms and joining with implicit AND.
+        Escapes special FTS characters.
+        """
+        # Remove FTS5 special chars that could cause syntax errors
+        cleaned = query.replace('"', '').replace("'", "").replace('*', '').replace('(', '').replace(')', '')
+        terms = cleaned.split()
+        if not terms:
+            return '""'
+        # Quote each term for exact matching, join with implicit AND
+        quoted = " ".join(f'"{t}"' for t in terms)
+        return quoted
 
     def semantic_search(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
         """Semantic search using ChromaDB vectors."""
@@ -508,24 +661,27 @@ class JobCache:
 
     def list_all(self, limit: int = 100) -> List[Dict[str, Any]]:
         """List all jobs."""
-        rows = self._conn.execute(
-            "SELECT * FROM jobs ORDER BY cached_at DESC LIMIT ?", (limit,)
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM jobs ORDER BY cached_at DESC LIMIT ?", (limit,)
+            ).fetchall()
         return [self._row_to_dict(r) for r in rows]
 
     def list_by_platform(self) -> Dict[str, int]:
         """Job counts by platform."""
-        rows = self._conn.execute(
-            "SELECT platform, COUNT(*) as cnt FROM jobs GROUP BY platform"
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT platform, COUNT(*) as cnt FROM jobs GROUP BY platform"
+            ).fetchall()
         return {r["platform"]: r["cnt"] for r in rows}
 
     def list_companies(self, limit: int = 20) -> List[tuple]:
         """Top companies by job count."""
-        rows = self._conn.execute(
-            "SELECT company, COUNT(*) as cnt FROM jobs GROUP BY company ORDER BY cnt DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT company, COUNT(*) as cnt FROM jobs GROUP BY company ORDER BY cnt DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
         return [(r["company"], r["cnt"]) for r in rows]
 
     # ── Public: Match CRUD ───────────────────────────────────
@@ -562,17 +718,18 @@ class JobCache:
     def get_match(self, job_id: str, profile_hash: str = "") -> Optional[Dict[str, Any]]:
         """Get match result for a job."""
         match_key = f"{job_id}:{profile_hash}" if profile_hash else job_id
-        row = self._conn.execute(
-            "SELECT * FROM matches WHERE match_key=?", (match_key,)
-        ).fetchone()
-        if row:
-            return self._row_to_dict(row)
-        # Fallback: try without profile hash
-        row = self._conn.execute(
-            "SELECT * FROM matches WHERE job_id=? ORDER BY cached_at DESC LIMIT 1",
-            (job_id,),
-        ).fetchone()
-        return self._row_to_dict(row) if row else None
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM matches WHERE match_key=?", (match_key,)
+            ).fetchone()
+            if row:
+                return self._row_to_dict(row)
+            # Fallback: try without profile hash
+            row = self._conn.execute(
+                "SELECT * FROM matches WHERE job_id=? ORDER BY cached_at DESC LIMIT 1",
+                (job_id,),
+            ).fetchone()
+            return self._row_to_dict(row) if row else None
 
     def list_matches(self, min_score: int = 0, limit: int = 50) -> List[Dict[str, Any]]:
         """List matches filtered by score, excluding excluded companies."""
@@ -580,13 +737,14 @@ class JobCache:
         context = get_store().get_search_context()
         excluded = [c.lower() for c in context.get("excluded_companies", [])]
 
-        rows = self._conn.execute(
-            """SELECT m.*, j.company FROM matches m
-               JOIN jobs j ON m.job_id = j.id
-               WHERE m.match_score >= ? AND m.match_level != 'excluded'
-               ORDER BY m.match_score DESC LIMIT ?""",
-            (min_score, limit * 3),  # over-fetch to account for exclusions
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT m.*, j.company FROM matches m
+                   JOIN jobs j ON m.job_id = j.id
+                   WHERE m.match_score >= ? AND m.match_level != 'excluded'
+                   ORDER BY m.match_score DESC LIMIT ?""",
+                (min_score, limit * 3),  # over-fetch to account for exclusions
+            ).fetchall()
 
         results = []
         for r in rows:
@@ -614,9 +772,10 @@ class JobCache:
 
     def match_stats(self) -> Dict[str, Any]:
         """Get match statistics."""
-        rows = self._conn.execute(
-            "SELECT match_score, match_level FROM matches"
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT match_score, match_level FROM matches"
+            ).fetchall()
         if not rows:
             return {"total_matches": 0}
 
@@ -638,7 +797,8 @@ class JobCache:
 
     def stats(self) -> Dict[str, Any]:
         """Get cache statistics."""
-        meta_rows = self._conn.execute("SELECT key, value FROM metadata").fetchall()
+        with self._lock:
+            meta_rows = self._conn.execute("SELECT key, value FROM metadata").fetchall()
         meta = {r["key"]: r["value"] for r in meta_rows}
 
         return {
@@ -687,13 +847,16 @@ class JobCache:
 # ── Global singleton ─────────────────────────────────────────
 
 _cache: Optional[JobCache] = None
+_cache_lock = threading.Lock()
 
 
 def get_cache() -> JobCache:
     """Get or create the global job cache."""
     global _cache
     if _cache is None:
-        _cache = JobCache()
+        with _cache_lock:
+            if _cache is None:
+                _cache = JobCache()
     return _cache
 
 

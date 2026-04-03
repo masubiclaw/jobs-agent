@@ -1,5 +1,6 @@
 """Admin routes for system management."""
 
+from pathlib import Path
 from typing import Optional, List
 from fastapi import APIRouter, HTTPException, status, Depends, Query, BackgroundTasks
 
@@ -39,6 +40,17 @@ async def run_scraper(
     
     Scrapes job listings from company career pages defined in JobOpeningsLink.md.
     """
+    # Validate file_path is within the project directory
+    if file_path:
+        project_root = Path(__file__).resolve().parent.parent.parent
+        resolved = Path(file_path).resolve()
+        if not resolved.is_relative_to(project_root):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="file_path must be within the project directory"
+            )
+        file_path = str(resolved)
+
     background_tasks.add_task(
         service.run_scraper,
         file_path=file_path,

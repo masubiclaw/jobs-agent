@@ -38,23 +38,89 @@ class UserStore:
         logger.info(f"UserStore ready: {len(self._users)} users at {self.users_file}")
     
     def _load_users(self) -> Dict[str, Dict[str, Any]]:
-        """Load users from disk."""
-        if self.users_file.exists():
+        """Load users from disk (JSON with TOON fallback)."""
+        json_file = self.users_file.with_suffix(".json")
+
+        # Prefer JSON format (reliable)
+        if json_file.exists():
             try:
-                data = from_toon(self.users_file.read_text())
-                users_data = data.get("users", data) if isinstance(data, dict) else data
-                # Handle list format (TOON may deserialize nested sections as lists)
+                import json
+                data = json.loads(json_file.read_text())
+                users_data = data.get("users", {})
+                if isinstance(users_data, dict):
+                    return users_data
                 if isinstance(users_data, list):
                     return {u["id"]: u for u in users_data if isinstance(u, dict) and "id" in u}
-                return users_data if isinstance(users_data, dict) else {}
             except Exception as e:
-                logger.error(f"Failed to load users: {e}")
+                logger.error(f"Failed to load users.json: {e}")
+
+        # Fallback: TOON format (migrate to JSON)
+        if self.users_file.exists():
+            try:
+                # Parse TOON manually for nested user sections
+                users = self._parse_users_toon(self.users_file.read_text())
+                if users:
+                    # Migrate to JSON
+                    self._users = users
+                    self._save_users()
+                    logger.info(f"Migrated {len(users)} users from TOON to JSON")
+                    return users
+            except Exception as e:
+                logger.error(f"Failed to load users.toon: {e}")
         return {}
-    
+
+    @staticmethod
+    def _parse_users_toon(text: str) -> Dict[str, Dict[str, Any]]:
+        """Parse users from TOON format manually (handles nested sections)."""
+        import re
+        users: Dict[str, Dict[str, Any]] = {}
+        current_user: Optional[Dict[str, Any]] = None
+        current_id: Optional[str] = None
+
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+
+            # Top-level section
+            if stripped == "[users]":
+                continue
+            if stripped.startswith("updated_at:") and current_user is None:
+                continue
+
+            # User section header [user-id]
+            user_match = re.match(r'^\[([a-zA-Z0-9_-]+)\]$', stripped)
+            if user_match:
+                if current_user and current_id:
+                    users[current_id] = current_user
+                current_id = user_match.group(1)
+                current_user = {"id": current_id}
+                continue
+
+            # Key-value pair
+            if current_user is not None and ":" in stripped:
+                key, _, value = stripped.partition(":")
+                key = key.strip()
+                value = value.strip()
+                # Convert booleans
+                if value.lower() == "true":
+                    value = True
+                elif value.lower() == "false":
+                    value = False
+                current_user[key] = value
+
+        # Don't forget the last user
+        if current_user and current_id:
+            users[current_id] = current_user
+
+        return users
+
     def _save_users(self):
-        """Save users to disk."""
+        """Save users to disk as JSON (reliable format)."""
+        import json
+        json_file = self.users_file.with_suffix(".json")
         data = {"users": self._users, "updated_at": datetime.now().isoformat()}
-        self.users_file.write_text(to_toon(data) + '\n')
+        json_file.write_text(json.dumps(data, indent=2, default=str))
     
     def _generate_id(self) -> str:
         """Generate cryptographically secure unique user ID."""

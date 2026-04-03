@@ -1,7 +1,10 @@
 """Authentication routes for user registration and login."""
 
+import logging
 import time
 from collections import defaultdict
+
+logger = logging.getLogger(__name__)
 from fastapi import APIRouter, HTTPException, status, Depends, Request
 
 from api.models import UserCreate, UserLogin, UserResponse, Token, PasswordChange
@@ -123,7 +126,17 @@ async def auto_login() -> Token:
     """
     Auto-login as the default admin user.
     Creates the admin if it doesn't exist yet, then returns a JWT token.
+    Only available in non-production environments.
     """
+    import os
+    environment = os.getenv("ENVIRONMENT", "development").lower()
+    if environment == "production":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Auto-login is disabled in production"
+        )
+    logger.warning("Auto-login endpoint used — this should only be available in development")
+
     from api.main import DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_PASSWORD, DEFAULT_ADMIN_NAME
 
     user_store = get_user_store()

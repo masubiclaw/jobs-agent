@@ -3,6 +3,8 @@
 import json
 import logging
 import hashlib
+import re
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -27,11 +29,30 @@ class JobService:
     (status, notes) is stored per-user.
     """
     
+    # Class-level dict of locks per user_id for metadata read-modify-write
+    _user_locks: Dict[str, threading.Lock] = {}
+    _user_locks_lock = threading.Lock()
+
+    @classmethod
+    def _get_user_lock(cls, user_id: str) -> threading.Lock:
+        """Get or create a lock for a specific user_id."""
+        with cls._user_locks_lock:
+            if user_id not in cls._user_locks:
+                cls._user_locks[user_id] = threading.Lock()
+            return cls._user_locks[user_id]
+
     def __init__(self, base_dir: Path = None):
         self.base_dir = Path(base_dir) if base_dir else Path(".job_cache/users")
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self._cache = get_cache()
-    
+
+    @staticmethod
+    def _strip_html(text: str) -> str:
+        """Strip HTML tags from text to prevent XSS."""
+        if not text:
+            return text
+        return re.sub(r'<[^>]+>', '', text)
+
     def _user_jobs_file(self, user_id: str) -> Path:
         """Get user-specific job metadata file."""
         user_dir = self.base_dir / user_id
@@ -68,23 +89,25 @@ class JobService:
         })
     
     def _set_user_job_meta(self, user_id: str, job_id: str, **kwargs):
-        """Set user-specific metadata for a job."""
-        all_meta = self._load_user_job_metadata(user_id)
-        if job_id not in all_meta:
-            all_meta[job_id] = {
-                "status": JobStatus.ACTIVE.value,
-                "notes": "",
-                "added_by": JobAddMethod.SCRAPED.value
-            }
-        
-        for key, value in kwargs.items():
-            if value is not None:
-                if hasattr(value, 'value'):
-                    all_meta[job_id][key] = value.value
-                else:
-                    all_meta[job_id][key] = value
-        
-        self._save_user_job_metadata(user_id, all_meta)
+        """Set user-specific metadata for a job (thread-safe)."""
+        lock = self._get_user_lock(user_id)
+        with lock:
+            all_meta = self._load_user_job_metadata(user_id)
+            if job_id not in all_meta:
+                all_meta[job_id] = {
+                    "status": JobStatus.ACTIVE.value,
+                    "notes": "",
+                    "added_by": JobAddMethod.SCRAPED.value
+                }
+
+            for key, value in kwargs.items():
+                if value is not None:
+                    if hasattr(value, 'value'):
+                        all_meta[job_id][key] = value.value
+                    else:
+                        all_meta[job_id][key] = value
+
+            self._save_user_job_metadata(user_id, all_meta)
     
     def _job_to_response(self, job: Dict[str, Any], user_meta: Dict[str, Any] = None, match: Dict[str, Any] = None) -> JobResponse:
         """Convert job dict to response model."""
@@ -257,18 +280,23 @@ class JobService:
         # Method 3: Direct fields
         elif job_data.title and job_data.title.strip() and job_data.company and job_data.company.strip():
             job = {
-                "title": job_data.title,
-                "company": job_data.company,
-                "location": job_data.location or "Unknown",
-                "description": job_data.description or "",
+                "title": self._strip_html(job_data.title),
+                "company": self._strip_html(job_data.company),
+                "location": self._strip_html(job_data.location or "Unknown"),
+                "description": self._strip_html(job_data.description or ""),
                 "url": job_data.url or "",
-                "salary": job_data.salary or "Not specified",
+                "salary": self._strip_html(job_data.salary or "Not specified"),
             }
             added_by = JobAddMethod.MANUAL
         
         if not job:
             return None
-        
+
+        # Sanitize all text fields to prevent XSS
+        for field in ("title", "company", "location", "description", "salary"):
+            if field in job and isinstance(job[field], str):
+                job[field] = self._strip_html(job[field])
+
         # Add to cache
         self._cache.add(job)
         self._cache.flush()

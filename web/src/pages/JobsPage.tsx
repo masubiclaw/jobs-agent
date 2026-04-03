@@ -17,6 +17,7 @@ export default function JobsPage() {
   const [searchInput, setSearchInput] = useState('')
   const [sortField, setSortField] = useState<SortField>('date')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
+  const [dismissingId, setDismissingId] = useState<string | null>(null)
 
   // Debounced live search
   useEffect(() => {
@@ -27,20 +28,22 @@ export default function JobsPage() {
     return () => clearTimeout(timer)
   }, [searchInput])
 
-  const { data, isLoading } = useQuery({
-    queryKey: ['jobs', { page, pageSize, query, status }],
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ['jobs', { page, pageSize, query, status, sortField }],
     queryFn: () =>
       jobsApi.list({
         page,
         page_size: pageSize,
         query: query || undefined,
         status: status || undefined,
+        sort_by: sortField,
       }),
   })
 
   const notInterestedMutation = useMutation({
     mutationFn: (jobId: string) => jobsApi.update(jobId, { status: 'archived' as any }),
     onMutate: async (jobId) => {
+      setDismissingId(jobId)
       const qk = ['jobs', { page, pageSize, query, status }]
       await queryClient.cancelQueries({ queryKey: qk })
       const prev = queryClient.getQueryData(qk)
@@ -53,29 +56,13 @@ export default function JobsPage() {
       if (context?.qk) queryClient.setQueryData(context.qk, context.prev)
     },
     onSettled: () => {
+      setDismissingId(null)
       queryClient.invalidateQueries({ queryKey: ['jobs'] })
     },
   })
 
-  // Client-side sorting (API doesn't support server-side sort)
-  const sortedJobs = data?.jobs ? [...data.jobs].sort((a, b) => {
-    const dir = sortDir === 'asc' ? 1 : -1
-    switch (sortField) {
-      case 'title':
-        return dir * a.title.localeCompare(b.title)
-      case 'company':
-        return dir * a.company.localeCompare(b.company)
-      case 'score': {
-        const sa = a.match?.combined_score ?? -1
-        const sb = b.match?.combined_score ?? -1
-        return dir * (sa - sb)
-      }
-      case 'date':
-        return dir * (new Date(a.cached_at).getTime() - new Date(b.cached_at).getTime())
-      default:
-        return 0
-    }
-  }) : []
+  // Server-side sorting — data comes pre-sorted
+  const sortedJobs = data?.jobs ?? []
 
   const toggleSort = (field: SortField) => {
     if (sortField === field) {
@@ -170,7 +157,12 @@ export default function JobsPage() {
       </div>
 
       {/* Job list */}
-      {isLoading ? (
+      {isError ? (
+        <div className="card text-center py-8">
+          <p className="text-red-600 font-medium">Failed to load jobs</p>
+          <p className="text-gray-500 text-sm mt-1">{(error as any)?.message || 'Network error'}</p>
+        </div>
+      ) : isLoading ? (
         <div className="flex items-center justify-center h-64">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
         </div>
@@ -239,7 +231,7 @@ export default function JobsPage() {
                         e.preventDefault()
                         notInterestedMutation.mutate(job.id)
                       }}
-                      disabled={notInterestedMutation.isPending}
+                      disabled={dismissingId === job.id}
                       className="p-2 text-gray-400 hover:text-red-600 transition-colors"
                       title="Not interested"
                     >

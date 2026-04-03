@@ -180,7 +180,12 @@ async def delete_job(
     current_user: UserResponse = Depends(get_current_user),
     service: JobService = Depends(get_job_service)
 ):
-    """Delete a job."""
+    """Delete a job. Admin only."""
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admins can delete jobs"
+        )
     success = service.delete_job(job_id, current_user.id)
     
     if not success:

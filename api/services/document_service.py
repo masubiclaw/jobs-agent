@@ -2,6 +2,7 @@
 
 import logging
 import hashlib
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, List
@@ -29,10 +30,22 @@ logger = logging.getLogger(__name__)
 class DocumentService:
     """
     Document generation service.
-    
+
     Generates resumes and cover letters using existing tools.
     """
-    
+
+    # Class-level dict of locks per user_id for index read-modify-write
+    _user_locks: Dict[str, threading.Lock] = {}
+    _user_locks_lock = threading.Lock()
+
+    @classmethod
+    def _get_user_lock(cls, user_id: str) -> threading.Lock:
+        """Get or create a lock for a specific user_id."""
+        with cls._user_locks_lock:
+            if user_id not in cls._user_locks:
+                cls._user_locks[user_id] = threading.Lock()
+            return cls._user_locks[user_id]
+
     def __init__(self, base_dir: Path = None):
         self.base_dir = Path(base_dir) if base_dir else Path(".job_cache/users")
         self.base_dir.mkdir(parents=True, exist_ok=True)
@@ -69,6 +82,14 @@ class DocumentService:
             "updated_at": datetime.now().isoformat()
         }
         index_file.write_text(json.dumps(data, indent=2))
+
+    def _update_docs_index(self, user_id: str, doc_id: str, doc_info: Dict[str, Any]):
+        """Thread-safe update of a single entry in the docs index."""
+        lock = self._get_user_lock(user_id)
+        with lock:
+            index = self._load_docs_index(user_id)
+            index[doc_id] = doc_info
+            self._save_docs_index(user_id, index)
     
     def _generate_doc_id(self, job_id: str, profile_id: str, doc_type: DocumentType) -> str:
         """Generate unique document ID."""
@@ -171,9 +192,8 @@ class DocumentService:
                 created_at=datetime.now()
             )
 
-            # Save to index
-            index = self._load_docs_index(user_id)
-            index[doc_id] = {
+            # Save to index (thread-safe)
+            self._update_docs_index(user_id, doc_id, {
                 "id": doc_id,
                 "job_id": job_id,
                 "profile_id": profile_response.id,
@@ -186,8 +206,7 @@ class DocumentService:
                 "reviewed": False,
                 "is_good": None,
                 "created_at": datetime.now().isoformat()
-            }
-            self._save_docs_index(user_id, index)
+            })
 
             return response
 
@@ -225,7 +244,7 @@ class DocumentService:
 
         # Validate path is within allowed directories
         allowed_dirs = [Path(".job_cache").resolve(), Path("/tmp").resolve(), Path("generated_documents").resolve()]
-        if not any(str(pdf_path).startswith(str(d)) for d in allowed_dirs):
+        if not any(pdf_path.is_relative_to(d) for d in allowed_dirs):
             logger.warning(f"Path traversal attempt blocked: {pdf_path}")
             return None
 
@@ -290,16 +309,18 @@ class DocumentService:
     def update_document_review(
         self, user_id: str, doc_id: str, reviewed: Optional[bool] = None, is_good: Optional[bool] = None
     ) -> bool:
-        """Update reviewed/is_good flags on a document."""
-        index = self._load_docs_index(user_id)
-        if doc_id not in index:
-            return False
-        if reviewed is not None:
-            index[doc_id]["reviewed"] = reviewed
-        if is_good is not None:
-            index[doc_id]["is_good"] = is_good
-        self._save_docs_index(user_id, index)
-        return True
+        """Update reviewed/is_good flags on a document (thread-safe)."""
+        lock = self._get_user_lock(user_id)
+        with lock:
+            index = self._load_docs_index(user_id)
+            if doc_id not in index:
+                return False
+            if reviewed is not None:
+                index[doc_id]["reviewed"] = reviewed
+            if is_good is not None:
+                index[doc_id]["is_good"] = is_good
+            self._save_docs_index(user_id, index)
+            return True
 
     def _job_to_dict(self, job) -> Dict[str, Any]:
         """Convert job response to dict for existing tools."""

@@ -85,7 +85,7 @@ def fetch_page_with_playwright(url: str, wait_time: int = 3) -> Optional[Dict[st
                         page.wait_for_timeout(1000)
                         logger.info(f"   📜 Expanded content section")
                         break
-            except:
+            except Exception:
                 pass
             
             # Get rendered content
@@ -404,6 +404,9 @@ def fetch_job_from_url(url: str) -> Optional[Dict[str, Any]]:
     parsed = urlparse(url)
     if not parsed.scheme or not parsed.netloc:
         logger.error(f"Invalid URL: {url}")
+        return None
+    if parsed.scheme not in ('http', 'https'):
+        logger.error(f"Unsupported URL scheme '{parsed.scheme}': {url}")
         return None
     
     logger.info(f"📋 Fetching job from: {url[:80]}...")

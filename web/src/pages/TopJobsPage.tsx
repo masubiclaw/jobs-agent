@@ -8,9 +8,10 @@ export default function TopJobsPage() {
   const [minScore, setMinScore] = useState(0)
   const [excludeFilter, setExcludeFilter] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [dismissingId, setDismissingId] = useState<string | null>(null)
   const queryClient = useQueryClient()
 
-  const { data: jobs, isLoading } = useQuery({
+  const { data: jobs, isLoading, isError, error } = useQuery({
     queryKey: ['topJobs', minScore],
     queryFn: () => jobsApi.getTop(50, minScore),
   })
@@ -30,6 +31,7 @@ export default function TopJobsPage() {
   const notInterestedMutation = useMutation({
     mutationFn: (jobId: string) => jobsApi.update(jobId, { status: 'archived' as any }),
     onMutate: async (jobId) => {
+      setDismissingId(jobId)
       await queryClient.cancelQueries({ queryKey: ['topJobs', minScore] })
       const prev = queryClient.getQueryData(['topJobs', minScore])
       queryClient.setQueryData(['topJobs', minScore], (old: any) =>
@@ -41,6 +43,7 @@ export default function TopJobsPage() {
       queryClient.setQueryData(['topJobs', minScore], context?.prev)
     },
     onSettled: () => {
+      setDismissingId(null)
       queryClient.invalidateQueries({ queryKey: ['topJobs'] })
     },
   })
@@ -139,7 +142,12 @@ export default function TopJobsPage() {
         )}
       </div>
 
-      {isLoading ? (
+      {isError ? (
+        <div className="card text-center py-8">
+          <p className="text-red-600 font-medium">Failed to load matches</p>
+          <p className="text-gray-500 text-sm mt-1">{(error as any)?.message || 'Network error'}</p>
+        </div>
+      ) : isLoading ? (
         <div className="flex items-center justify-center h-64">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
         </div>
@@ -199,6 +207,9 @@ export default function TopJobsPage() {
                     {job.platform && job.platform.toLowerCase() !== 'unknown' && (
                       <span className="capitalize">{job.platform}</span>
                     )}
+                    {job.cached_at && (
+                      <span className="text-gray-400">{new Date(job.cached_at).toLocaleDateString()}</span>
+                    )}
                   </div>
                   {job.match && (
                     <div className="flex flex-wrap items-center gap-4 mt-3 text-sm">
@@ -221,7 +232,7 @@ export default function TopJobsPage() {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => notInterestedMutation.mutate(job.id)}
-                    disabled={notInterestedMutation.isPending}
+                    disabled={dismissingId === job.id}
                     className="p-2 text-gray-400 hover:text-red-600 transition-colors"
                     title="Not interested"
                   >

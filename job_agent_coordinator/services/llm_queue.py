@@ -66,11 +66,14 @@ class LLMQueue:
     """Singleton priority queue for serializing Ollama requests."""
 
     _instance: Optional["LLMQueue"] = None
+    _instance_lock = threading.Lock()
 
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
+            with cls._instance_lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._initialized = False
         return cls._instance
 
     def __init__(self):
@@ -96,7 +99,7 @@ class LLMQueue:
 
     def start(self):
         """Start the queue worker. Must be called from async context."""
-        self._loop = asyncio.get_event_loop()
+        self._loop = asyncio.get_running_loop()
         self._queue = asyncio.PriorityQueue()
         self._worker_task = self._loop.create_task(self._process_loop())
         logger.info("LLM Queue worker started")
@@ -393,6 +396,21 @@ def llm_request(
     Safe to call from worker threads (asyncio.to_thread, FastAPI sync handlers).
     Submits the request to the async queue and blocks until the result is ready.
     """
+    # Prevent deadlock: if called from the main thread while an event loop is
+    # running, run_coroutine_threadsafe would block the loop forever.
+    if threading.current_thread() is threading.main_thread():
+        try:
+            asyncio.get_running_loop()
+            raise RuntimeError(
+                "llm_request() cannot be called from the main thread while an "
+                "asyncio event loop is running — this would deadlock. "
+                "Use 'await queue.submit(...)' or call from a worker thread."
+            )
+        except RuntimeError as e:
+            if "deadlock" in str(e):
+                raise
+            pass  # No running loop — safe to proceed
+
     queue = get_queue()
 
     # If the queue worker hasn't started yet (e.g., called outside API context),

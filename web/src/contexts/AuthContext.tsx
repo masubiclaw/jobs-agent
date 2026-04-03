@@ -43,9 +43,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const userData = await authApi.getMe()
       setUser(userData)
     } catch (error: any) {
-      // Only clear token on 401 (invalid token), not on network errors
-      if (error?.response?.status === 401) {
+      // Clear token on auth errors (401) or if user data can't be loaded
+      if (error?.response?.status === 401 || error?.response?.status === 403) {
         localStorage.removeItem('auth_token')
+      } else {
+        // Network error — retry once after a short delay
+        try {
+          await new Promise(r => setTimeout(r, 2000))
+          const userData = await authApi.getMe()
+          setUser(userData)
+          return
+        } catch {
+          localStorage.removeItem('auth_token')
+        }
       }
     } finally {
       setIsLoading(false)

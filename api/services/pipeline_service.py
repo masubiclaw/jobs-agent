@@ -153,7 +153,7 @@ class PipelineService:
         if self._scheduler_task and not self._scheduler_task.done():
             self._scheduler_task.cancel()
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         self._scheduler_task = loop.create_task(self._scheduler_loop())
 
     def stop_scheduler(self):
@@ -215,6 +215,10 @@ class PipelineService:
         return get_store().get_search_context()
 
     async def run_pipeline_now(self, steps: List[str], user_id: Optional[str] = None):
+        valid_steps = {"search", "clean", "fetch", "match", "generate"}
+        invalid = set(steps) - valid_steps
+        if invalid:
+            raise ValueError(f"Invalid pipeline steps: {invalid}")
         if self._is_running:
             self._add_log("WARNING", "Pipeline already running, skipping")
             return

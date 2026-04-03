@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import List, Optional
 
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 # ── Auth Models ──────────────────────────────────────────────
@@ -184,14 +184,14 @@ class MatchResult(BaseModel):
 
 
 class JobCreate(BaseModel):
-    title: Optional[str] = None
-    company: Optional[str] = None
-    location: Optional[str] = None
-    salary: Optional[str] = None
-    url: Optional[str] = None
-    description: Optional[str] = None
-    plaintext: Optional[str] = None
-    job_url: Optional[str] = None
+    title: Optional[str] = Field(None, max_length=500)
+    company: Optional[str] = Field(None, max_length=200)
+    location: Optional[str] = Field(None, max_length=500)
+    salary: Optional[str] = Field(None, max_length=200)
+    url: Optional[str] = Field(None, max_length=2000)
+    description: Optional[str] = Field(None, max_length=100000)
+    plaintext: Optional[str] = Field(None, max_length=100000)
+    job_url: Optional[str] = Field(None, max_length=2000)
 
 
 class JobUpdate(BaseModel):

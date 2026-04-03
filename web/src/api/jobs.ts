@@ -9,6 +9,7 @@ interface ListJobsParams {
   location?: string
   query?: string
   semantic?: boolean
+  sort_by?: 'date' | 'company' | 'title' | 'score'
 }
 
 export const jobsApi = {
