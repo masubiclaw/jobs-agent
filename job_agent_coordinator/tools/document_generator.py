@@ -254,7 +254,7 @@ def has_template_artifacts(content: str) -> Tuple[bool, List[str]]:
 
 # Configuration
 OLLAMA_BASE_URL = os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma3:12b")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma3:27b")
 LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", 300))  # Longer timeout for document generation
 
 
@@ -271,6 +271,23 @@ def _call_ollama(prompt: str, temperature: float = 0.3) -> str:
     ).strip()
 
 
+def _extract_section(text: str, text_lower: str, header: str, stop_headers: list) -> str:
+    """Extract a section from notes, case-insensitive."""
+    header_lower = header.lower()
+    if header_lower not in text_lower:
+        # Also try line-by-line matching (e.g., "Education: ..." lines)
+        prefix = header_lower.rstrip(":").rstrip("s")
+        lines = [l for l in text.splitlines() if l.lower().strip().startswith(prefix)]
+        return "\n".join(lines) if lines else ""
+    idx = text_lower.find(header_lower)
+    end = len(text)
+    for stop in stop_headers:
+        pos = text_lower.find(stop.lower(), idx + len(header))
+        if pos != -1 and pos < end:
+            end = pos
+    return text[idx:end].strip()
+
+
 def _format_profile_for_prompt(profile: Dict[str, Any]) -> str:
     """Format user profile for inclusion in LLM prompt."""
     # Extract skills as names only
@@ -279,10 +296,10 @@ def _format_profile_for_prompt(profile: Dict[str, Any]) -> str:
         skill_names = [s.get("name", "") for s in skills]
     else:
         skill_names = skills
-    
+
     # Format experience
     experience_lines = []
-    for exp in profile.get("experience", [])[:6]:  # Include more for selection
+    for exp in profile.get("experience", [])[:6]:
         title = exp.get("title", "")
         company = exp.get("company", "")
         start = exp.get("start_date", "")
@@ -293,32 +310,17 @@ def _format_profile_for_prompt(profile: Dict[str, Any]) -> str:
   Company: {company}
   Dates: {start} to {end}
   Description: {desc}""")
-    
-    # Extract education from notes
+
+    # Extract education, certifications, and publications from notes
     notes = profile.get("notes", "")
-    education_section = ""
-    if "EDUCATION:" in notes:
-        edu_start = notes.find("EDUCATION:")
-        edu_end = notes.find("CERTIFICATIONS:", edu_start)
-        if edu_end == -1:
-            edu_end = len(notes)
-        education_section = notes[edu_start:edu_end].strip()
-    
-    # Extract certifications from notes
-    cert_section = ""
-    if "CERTIFICATIONS:" in notes:
-        cert_start = notes.find("CERTIFICATIONS:")
-        cert_end = notes.find("PUBLICATIONS:", cert_start)
-        if cert_end == -1:
-            cert_end = len(notes)
-        cert_section = notes[cert_start:cert_end].strip()
-    
-    # Extract publications from notes
-    pub_section = ""
-    if "PUBLICATIONS:" in notes:
-        pub_start = notes.find("PUBLICATIONS:")
-        pub_section = notes[pub_start:].strip()
-    
+    notes_lower = notes.lower()
+
+    education_section = _extract_section(notes, notes_lower, "EDUCATION:", ["CERTIFICATIONS:", "CERTIFICATION:", "PUBLICATIONS:"])
+    cert_section = _extract_section(notes, notes_lower, "CERTIFICATIONS:", ["PUBLICATIONS:", "EDUCATION:"])
+    if not cert_section:
+        cert_section = _extract_section(notes, notes_lower, "CERTIFICATION:", ["PUBLICATIONS:", "EDUCATION:"])
+    pub_section = _extract_section(notes, notes_lower, "PUBLICATIONS:", ["EDUCATION:", "CERTIFICATIONS:"])
+
     return f"""CANDIDATE PROFILE (ONLY use facts from this profile):
 
 Name: {profile.get('name', 'Unknown')}
@@ -527,11 +529,13 @@ OUTPUT FORMAT (follow exactly):
 {{Degree}}, {{Institution}}, {{Year}}
 
 FACTUAL ACCURACY RULES (CRITICAL):
-1. COPY degree names EXACTLY as written in profile
+1. COPY degree names EXACTLY as written in profile - do NOT rephrase or abbreviate
 2. COPY institution names EXACTLY as written in profile
 3. COPY years EXACTLY as written in profile
 4. Do NOT upgrade degrees (e.g., "BS" to "MS")
-5. Do NOT add certifications or courses not in profile
+5. Do NOT add certifications, courses, honors, or GPA not in profile
+6. If EDUCATION FROM PROFILE is empty or blank, output ONLY: [EDUCATION]
+7. NEVER invent education - if no education data is provided, leave the section empty
 
 RULES:
 - Use ONLY education information from the profile
@@ -542,6 +546,7 @@ FABRICATION EXAMPLES (these cause failure):
 - Profile: "BS Computer Science" -> Resume: "MS Computer Science" (WRONG - upgraded)
 - Profile: "Stanford University" -> Resume: "Stanford University, summa cum laude" (WRONG - honors invented)
 - Profile has no MBA -> Resume: "MBA, Business Administration" (WRONG - degree invented)
+- Profile education is empty -> Resume: "BS Computer Science, MIT" (WRONG - entirely fabricated)
 """,
 
     "publications": """Generate ONLY the publications section for a resume (if applicable).
@@ -749,7 +754,7 @@ FEEDBACK FROM PREVIOUS ATTEMPT (address these issues):
 
 {job_text}
 {feedback_section}
-Generate the resume now. Remember: 400-600 words to fill exactly 1 page, only facts from the profile, tailored to the job. Be detailed, not sparse.
+CRITICAL REMINDER: The candidate's name is {profile.get('name', 'Unknown')}. Use ONLY the work experience, skills, and education listed above. Do NOT invent any information. Generate the resume now. 400-600 words to fill exactly 1 page.
 """
     
     logger.info(f"Generating resume for {job.get('title', 'Unknown')} at {job.get('company', 'Unknown')}")
@@ -798,7 +803,7 @@ FEEDBACK FROM PREVIOUS ATTEMPT (address these issues):
 
 {job_text}
 {feedback_section}
-Generate the cover letter now. Remember: 250-350 words max, only facts from the profile, no fluff.
+CRITICAL REMINDER: The candidate's name is {profile.get('name', 'Unknown')}. Reference ONLY companies and roles listed in the profile above. Do NOT invent any experience or qualifications. Generate the cover letter now. 250-350 words max.
 """
     
     logger.info(f"Generating cover letter for {job.get('title', 'Unknown')} at {job.get('company', 'Unknown')}")
@@ -843,23 +848,11 @@ Dates: {start} to {end}
 Description: {desc}
 """)
     
-    # Extract education from notes
+    # Extract education and publications from notes (case-insensitive)
     notes = profile.get("notes", "")
-    education_section = ""
-    if "EDUCATION:" in notes:
-        edu_start = notes.find("EDUCATION:")
-        edu_end = notes.find("CERTIFICATIONS:", edu_start)
-        if edu_end == -1:
-            edu_end = notes.find("PUBLICATIONS:", edu_start)
-        if edu_end == -1:
-            edu_end = len(notes)
-        education_section = notes[edu_start:edu_end].strip()
-    
-    # Extract publications from notes
-    pub_section = ""
-    if "PUBLICATIONS:" in notes:
-        pub_start = notes.find("PUBLICATIONS:")
-        pub_section = notes[pub_start:].strip()
+    notes_lower = notes.lower()
+    education_section = _extract_section(notes, notes_lower, "EDUCATION:", ["CERTIFICATIONS:", "CERTIFICATION:", "PUBLICATIONS:"])
+    pub_section = _extract_section(notes, notes_lower, "PUBLICATIONS:", ["EDUCATION:", "CERTIFICATIONS:"])
     
     # Extract job keywords
     job_desc = job.get("description", "").lower()
@@ -913,10 +906,23 @@ def generate_section(
     """
     if section_name not in SECTION_PROMPTS:
         raise ValueError(f"Unknown section: {section_name}. Must be one of {RESUME_SECTIONS}")
-    
+
     # Extract data for prompt
     data = _extract_section_data(profile, job)
-    
+
+    # Education and header sections: format directly from profile data
+    # to prevent LLM hallucination of credentials
+    if section_name == "education":
+        return _format_education_from_profile(data.get("education", ""))
+
+    if section_name == "header":
+        name = profile.get("name", "Unknown")
+        email = profile.get("email", "")
+        phone = profile.get("phone", "")
+        location = profile.get("location", "")
+        parts = [p for p in [email, phone, location] if p]
+        return f"[HEADER]\n{name}\n{' | '.join(parts)}"
+
     # Add feedback if provided
     feedback_section = ""
     if feedback:
@@ -925,16 +931,54 @@ FEEDBACK FROM PREVIOUS ATTEMPT (address these issues):
 {feedback}
 """
     data["feedback_section"] = feedback_section
-    
+
     # Format the section-specific prompt
     prompt = SECTION_PROMPTS[section_name].format(**data)
-    
+
     logger.info(f"Generating section: {section_name}")
-    
+
     raw_content = _call_ollama(prompt, temperature=0.3)
     content = _clean_template_artifacts(raw_content)
-    
+
     return content
+
+
+def _format_education_from_profile(education_text: str) -> str:
+    """Format education directly from profile data — no LLM involved.
+
+    Parses lines like:
+      Education: Master's Degree in Computer Science from Seattle University (2012)
+    Into:
+      Master's Degree in Computer Science, Seattle University, 2012
+    """
+    if not education_text or not education_text.strip():
+        return "[EDUCATION]"
+
+    lines = []
+    for raw_line in education_text.strip().splitlines():
+        line = raw_line.strip()
+        # Strip "Education: " prefix
+        for prefix in ["Education: ", "education: ", "EDUCATION: "]:
+            if line.startswith(prefix):
+                line = line[len(prefix):]
+                break
+
+        # Try to parse "Degree from Institution (Year)"
+        if " from " in line:
+            parts = line.split(" from ", 1)
+            degree = parts[0].strip()
+            rest = parts[1].strip()
+            # Extract year in parentheses
+            if "(" in rest and ")" in rest:
+                inst = rest[:rest.rfind("(")].strip()
+                year = rest[rest.rfind("(") + 1:rest.rfind(")")].strip()
+                lines.append(f"{degree}, {inst}, {year}")
+            else:
+                lines.append(f"{degree}, {rest}")
+        elif line:
+            lines.append(line)
+
+    return "[EDUCATION]\n" + "\n".join(lines) if lines else "[EDUCATION]"
 
 
 def generate_resume_by_sections(

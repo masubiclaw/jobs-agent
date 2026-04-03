@@ -400,38 +400,58 @@ class PipelineService:
             return 0
 
     async def _run_fetch_step(self, cache) -> int:
-        """Fetch missing descriptions. Returns number fetched."""
+        """Fetch missing descriptions via Playwright (no LLM). Returns number fetched."""
         try:
-            from job_agent_coordinator.tools.url_job_fetcher import fetch_job_from_url
+            import concurrent.futures
+            from job_agent_coordinator.tools.url_job_fetcher import fetch_page_with_playwright
 
-            jobs = cache.list_all(limit=100)
-            without_desc = [j for j in jobs if not j.get("description")]
+            all_jobs = cache.list_all(limit=10000)
+            without_desc = [
+                j for j in all_jobs
+                if not j.get("description", "").strip() and j.get("url", "").strip()
+            ]
 
             if not without_desc:
+                self._add_log("INFO", "All jobs already have descriptions")
                 return 0
 
+            batch_size = 200
+            batch = without_desc[:batch_size]
+            self._add_log("INFO", f"Fetching descriptions for {len(batch)} of {len(without_desc)} jobs...")
+
             fetched = 0
-            for job in without_desc[:50]:
-                url = job.get("url")
+            for i, job in enumerate(batch):
+                url = job.get("url", "")
                 if not url:
                     continue
                 try:
-                    result = await asyncio.to_thread(fetch_job_from_url, url)
-                    if result.get("success") and result.get("job", {}).get("description"):
-                        job["description"] = result["job"]["description"]
-                        cache.add(job)
+                    # Run Playwright in separate thread to avoid asyncio conflict
+                    page_data = await asyncio.to_thread(
+                        self._fetch_page_in_thread, url
+                    )
+                    if page_data and len(page_data.get("text", "")) > 100:
+                        desc = page_data["text"][:8000]
+                        cache.update_job(job["id"], description=desc)
                         fetched += 1
-                except Exception:
-                    pass
-                await asyncio.sleep(0.5)
+                except Exception as e:
+                    self._add_log("DEBUG", f"Fetch failed for {url[:60]}: {e}")
+                if (i + 1) % 25 == 0:
+                    self._add_log("INFO", f"  Fetched {fetched}/{i + 1} descriptions")
+                await asyncio.sleep(0.3)
 
+            self._add_log("INFO", f"Fetch complete: {fetched} descriptions added")
             return fetched
-        except ImportError:
-            self._add_log("WARNING", "URL job fetcher not available")
-            return 0
         except Exception as e:
             self._add_log("ERROR", f"Fetch error: {e}")
             return 0
+
+    @staticmethod
+    def _fetch_page_in_thread(url: str):
+        """Run Playwright in a clean thread (no asyncio loop)."""
+        import concurrent.futures
+        from job_agent_coordinator.tools.url_job_fetcher import fetch_page_with_playwright
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            return ex.submit(fetch_page_with_playwright, url).result(timeout=45)
 
     async def _run_match_step(self, cache) -> int:
         """Run job matching. Returns number of good matches."""

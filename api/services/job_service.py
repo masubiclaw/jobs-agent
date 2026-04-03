@@ -198,18 +198,39 @@ class JobService:
         limit: int = 10,
         min_score: int = 0
     ) -> List[JobResponse]:
-        """Get top matched jobs."""
-        matches = self._cache.list_matches(min_score=min_score, limit=limit)
+        """Get top matched jobs, filtering out archived and excluded companies."""
+        matches = self._cache.list_matches(min_score=min_score, limit=limit * 3)
         user_meta = self._load_user_job_metadata(user_id)
-        
+
+        # Load excluded companies from user's API profile
+        from api.services.profile_service import ProfileService
+        excluded = []
+        try:
+            ps = ProfileService()
+            profile = ps.get_active_profile(user_id)
+            if profile and profile.preferences:
+                excluded = [c.lower() for c in profile.preferences.excluded_companies]
+        except Exception:
+            pass
+
         jobs = []
         for match in matches:
             job_id = match.get("job_id", "")
             job = self._cache.get(job_id)
-            if job:
-                meta = user_meta.get(job_id, {"status": JobStatus.ACTIVE.value})
-                jobs.append(self._job_to_response(job, meta, match))
-        
+            if not job:
+                continue
+            meta = user_meta.get(job_id, {"status": JobStatus.ACTIVE.value})
+            # Skip archived/not-interested jobs
+            if meta.get("status") == JobStatus.ARCHIVED.value:
+                continue
+            # Skip excluded companies
+            company = job.get("company", "").lower()
+            if any(exc in company for exc in excluded):
+                continue
+            jobs.append(self._job_to_response(job, meta, match))
+            if len(jobs) >= limit:
+                break
+
         return jobs
     
     def create_job(self, user_id: str, job_data: JobCreate) -> Optional[JobResponse]:
@@ -250,9 +271,9 @@ class JobService:
         
         # Add to cache
         self._cache.add(job)
-        self._cache._save_jobs()
+        self._cache.flush()
         
-        job_id = self._cache._generate_id(job)
+        job_id = self._cache.generate_id(job)
         
         # Set user metadata
         self._set_user_job_meta(user_id, job_id, added_by=added_by, status=JobStatus.ACTIVE)
@@ -320,9 +341,9 @@ JSON:"""
             
             # Add to cache
             self._cache.add(job)
-            self._cache._save_jobs()
+            self._cache.flush()
             
-            job_id = self._cache._generate_id(job)
+            job_id = self._cache.generate_id(job)
             
             # Set user metadata
             self._set_user_job_meta(user_id, job_id, added_by=JobAddMethod.PDF, status=JobStatus.ACTIVE)
@@ -373,7 +394,7 @@ JSON:"""
         job = self._cache.get(job_id)
         if job:
             self._cache.remove(job_id)
-            self._cache._save_jobs()
+            self._cache.flush()
             return True
 
         return had_meta

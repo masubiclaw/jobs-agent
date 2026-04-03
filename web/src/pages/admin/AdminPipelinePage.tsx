@@ -78,7 +78,10 @@ export default function AdminPipelinePage() {
       addMessage('success', data.message)
       queryClient.invalidateQueries({ queryKey: ['pipeline-status'] })
     },
-    onError: () => addMessage('error', 'Failed to start pipeline'),
+    onError: (err: any) => {
+      const detail = err?.response?.data?.detail || 'Failed to start pipeline'
+      addMessage('error', detail)
+    },
   })
 
   const schedulerMutation = useMutation({

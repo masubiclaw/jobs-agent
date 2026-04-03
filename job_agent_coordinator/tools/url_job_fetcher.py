@@ -407,9 +407,14 @@ def fetch_job_from_url(url: str) -> Optional[Dict[str, Any]]:
         return None
     
     logger.info(f"📋 Fetching job from: {url[:80]}...")
-    
+
     # Step 1: Fetch page content
-    page_data = fetch_page_with_playwright(url)
+    # Playwright sync API cannot run inside an asyncio event loop thread,
+    # so we run it in a separate thread via concurrent.futures.
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(fetch_page_with_playwright, url)
+        page_data = future.result(timeout=60)
     if not page_data:
         logger.error("Failed to fetch page content")
         return None

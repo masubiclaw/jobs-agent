@@ -924,7 +924,7 @@ def cache_jobs_with_dedup(jobs: List[Dict], use_llm_dedup: bool = True) -> Dict[
             existing_jobs.append(job)  # Add to existing for subsequent checks
     
     if added > 0:
-        cache._save_jobs()
+        cache.flush()
     
     return {"added": added, "duplicates": duplicates, "total": len(jobs)}
 

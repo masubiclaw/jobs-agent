@@ -151,7 +151,7 @@ def main():
             
             if desc and len(desc) >= 100:
                 # Update job in cache
-                cache._jobs[job_id]["description"] = desc
+                cache.update_job(job_id, description=desc)
                 success_count += 1
                 print(f"[{i}/{len(jobs_to_fetch)}] ✅ {title}: {len(desc)} chars")
             else:
@@ -161,7 +161,7 @@ def main():
     
     # Save updated cache
     if success_count > 0:
-        cache._save_jobs()
+        cache.flush()
         print(f"\n💾 Saved {success_count} descriptions to cache")
     
     # Summary

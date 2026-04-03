@@ -85,7 +85,7 @@ def process_single_url(
         if not no_cache:
             if cache.add(job):
                 print(f"   💾 Cached (ID: {job_id})")
-                cache._save_jobs()
+                cache.flush()
         else:
             job['id'] = job_id
             cache.add(job)

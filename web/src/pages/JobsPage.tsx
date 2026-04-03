@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { jobsApi } from '../api'
 import { JobStatus } from '../types'
-import { Briefcase, Search, Filter, Plus, ExternalLink, ArrowUpDown, ChevronUp, ChevronDown } from 'lucide-react'
+import { Briefcase, Search, Filter, Plus, ExternalLink, ArrowUpDown, ChevronUp, ChevronDown, ThumbsDown } from 'lucide-react'
 
 type SortField = 'title' | 'company' | 'score' | 'date'
 type SortDir = 'asc' | 'desc'
@@ -12,7 +12,8 @@ export default function JobsPage() {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   const [query, setQuery] = useState('')
-  const [status, setStatus] = useState<JobStatus | ''>('')
+  const [status, setStatus] = useState<JobStatus | ''>('active')
+  const queryClient = useQueryClient()
   const [searchInput, setSearchInput] = useState('')
   const [sortField, setSortField] = useState<SortField>('date')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
@@ -35,6 +36,25 @@ export default function JobsPage() {
         query: query || undefined,
         status: status || undefined,
       }),
+  })
+
+  const notInterestedMutation = useMutation({
+    mutationFn: (jobId: string) => jobsApi.update(jobId, { status: 'archived' as any }),
+    onMutate: async (jobId) => {
+      const qk = ['jobs', { page, pageSize, query, status }]
+      await queryClient.cancelQueries({ queryKey: qk })
+      const prev = queryClient.getQueryData(qk)
+      queryClient.setQueryData(qk, (old: any) =>
+        old ? { ...old, jobs: old.jobs.filter((j: any) => j.id !== jobId), total: old.total - 1 } : old
+      )
+      return { prev, qk }
+    },
+    onError: (_err, _id, context) => {
+      if (context?.qk) queryClient.setQueryData(context.qk, context.prev)
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['jobs'] })
+    },
   })
 
   // Client-side sorting (API doesn't support server-side sort)
@@ -214,6 +234,17 @@ export default function JobsPage() {
                     }`}>
                       {job.status}
                     </span>
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault()
+                        notInterestedMutation.mutate(job.id)
+                      }}
+                      disabled={notInterestedMutation.isPending}
+                      className="p-2 text-gray-400 hover:text-red-600 transition-colors"
+                      title="Not interested"
+                    >
+                      <ThumbsDown size={18} />
+                    </button>
                     {job.url && (
                       <a
                         href={job.url}

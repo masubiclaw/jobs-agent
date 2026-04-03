@@ -84,6 +84,9 @@ class LLMQueue:
 
         # Metrics
         self._history: deque[RequestMetrics] = deque(maxlen=500)
+        self._pending: List[Dict[str, Any]] = []  # Tracks queued items for visibility
+        self._current: Optional[Dict[str, Any]] = None  # Currently processing
+        self._pending_lock = threading.Lock()
         self._in_flight = 0
         self._total_requests = 0
         self._total_success = 0
@@ -122,9 +125,19 @@ class LLMQueue:
     ) -> str:
         """Submit a request to the queue and wait for the result."""
         future = self._loop.create_future()
+        seq = _next_seq()
+        pending_entry = {
+            "seq": seq,
+            "request_type": request_type,
+            "model": model,
+            "priority": int(priority),
+            "priority_name": priority.name if isinstance(priority, Priority) else str(priority),
+            "prompt_preview": prompt[:80].replace("\n", " "),
+            "enqueued_at": time.time(),
+        }
         item = (
             int(priority),
-            _next_seq(),
+            seq,
             {
                 "request_type": request_type,
                 "model": model,
@@ -133,12 +146,15 @@ class LLMQueue:
                 "timeout": timeout,
                 "future": future,
                 "enqueued_at": time.time(),
+                "seq": seq,
             },
         )
+        with self._pending_lock:
+            self._pending.append(pending_entry)
         await self._queue.put(item)
-        logger.debug(
+        logger.info(
             f"LLM queued: type={request_type} model={model} "
-            f"priority={priority.name} depth={self.queue_depth}"
+            f"priority={priority.name if isinstance(priority, Priority) else priority} depth={self.queue_depth}"
         )
         return await future
 
@@ -157,6 +173,18 @@ class LLMQueue:
             timeout = req["timeout"]
             future: asyncio.Future = req["future"]
             enqueued_at = req["enqueued_at"]
+
+            # Move from pending to current
+            seq = req.get("seq")
+            with self._pending_lock:
+                self._pending = [p for p in self._pending if p.get("seq") != seq]
+                self._current = {
+                    "request_type": request_type,
+                    "model": model,
+                    "priority": priority,
+                    "enqueued_at": enqueued_at,
+                    "started_at": time.time(),
+                }
 
             self._in_flight = 1
             self._total_requests += 1
@@ -188,6 +216,7 @@ class LLMQueue:
             finally:
                 finished_at = time.time()
                 self._in_flight = 0
+                self._current = None
 
                 metrics = RequestMetrics(
                     request_type=request_type,
@@ -288,6 +317,34 @@ class LLMQueue:
         all_durations = [m.duration_seconds for m in history]
         all_waits = [m.queue_wait_seconds for m in history]
 
+        # Pending items
+        now = time.time()
+        with self._pending_lock:
+            pending = [
+                {
+                    "type": p["request_type"],
+                    "model": p["model"],
+                    "priority": p["priority"],
+                    "priority_name": p.get("priority_name", ""),
+                    "prompt_preview": p.get("prompt_preview", ""),
+                    "waiting_seconds": round(now - p["enqueued_at"], 1),
+                }
+                for p in self._pending
+            ]
+
+        # Current request
+        current = None
+        if self._current:
+            current = {
+                "type": self._current["request_type"],
+                "model": self._current["model"],
+                "priority": self._current["priority"],
+                "running_seconds": round(now - self._current["started_at"], 1),
+                "waited_seconds": round(
+                    self._current["started_at"] - self._current["enqueued_at"], 1
+                ),
+            }
+
         return {
             "queue_depth": self.queue_depth,
             "in_flight": self._in_flight,
@@ -306,6 +363,8 @@ class LLMQueue:
             else 0,
             "by_type": by_type_out,
             "recent": recent,
+            "pending": pending,
+            "current": current,
         }
 
 

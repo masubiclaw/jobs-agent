@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { jobsApi } from '../api'
-import { Star, ExternalLink, X, Filter } from 'lucide-react'
+import { Star, ExternalLink, X, Filter, ThumbsDown } from 'lucide-react'
 
 export default function TopJobsPage() {
   const [minScore, setMinScore] = useState(0)
@@ -23,6 +23,24 @@ export default function TopJobsPage() {
     },
     onSuccess: () => {
       setSelectedIds(new Set())
+      queryClient.invalidateQueries({ queryKey: ['topJobs'] })
+    },
+  })
+
+  const notInterestedMutation = useMutation({
+    mutationFn: (jobId: string) => jobsApi.update(jobId, { status: 'archived' as any }),
+    onMutate: async (jobId) => {
+      await queryClient.cancelQueries({ queryKey: ['topJobs', minScore] })
+      const prev = queryClient.getQueryData(['topJobs', minScore])
+      queryClient.setQueryData(['topJobs', minScore], (old: any) =>
+        old?.filter((j: any) => j.id !== jobId)
+      )
+      return { prev }
+    },
+    onError: (_err, _id, context) => {
+      queryClient.setQueryData(['topJobs', minScore], context?.prev)
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['topJobs'] })
     },
   })
@@ -201,6 +219,14 @@ export default function TopJobsPage() {
                   )}
                 </div>
                 <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => notInterestedMutation.mutate(job.id)}
+                    disabled={notInterestedMutation.isPending}
+                    className="p-2 text-gray-400 hover:text-red-600 transition-colors"
+                    title="Not interested"
+                  >
+                    <ThumbsDown size={18} />
+                  </button>
                   <Link
                     to={`/jobs/${job.id}`}
                     className="btn btn-secondary"
