@@ -6,7 +6,7 @@ import json
 import logging
 import sqlite3
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -137,6 +137,7 @@ class JobCache:
             logger.info(f"FTS index rebuilt: {self._conn.execute('SELECT COUNT(*) FROM jobs_fts').fetchone()[0]} entries")
 
     def _count_table(self, table: str) -> int:
+        assert table in ("jobs", "matches", "metadata", "jobs_fts"), f"Invalid table name: {table}"
         row = self._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
         return row[0] if row else 0
 
@@ -331,34 +332,32 @@ class JobCache:
                 return False
 
             job["id"] = job_id
-            job.setdefault("cached_at", datetime.now().isoformat())
+            job.setdefault("cached_at", datetime.now(timezone.utc).isoformat())
             cur = self._conn.cursor()
             self._insert_job(cur, job)
             self._conn.execute(
                 "INSERT OR REPLACE INTO metadata (key,value) VALUES ('last_updated',?)",
                 (datetime.now().isoformat(),),
             )
-            self._conn.commit()
 
-        # Vector store
-        if self._collection:
-            try:
-                text = f"{job.get('title','')} {job.get('company','')} {job.get('location','')} {job.get('description','')[:500]}"
-                self._collection.add(
-                    documents=[text],
-                    metadatas=[{"job_id": job_id, "title": job.get("title", ""), "company": job.get("company", "")}],
-                    ids=[job_id],
-                )
-            except Exception:
-                pass
-
-        # FTS index
-        with self._lock:
+            # FTS index
             self._conn.execute(
                 "INSERT INTO jobs_fts(job_id, title, company, location, description) VALUES (?,?,?,?,?)",
                 (job_id, job.get("title",""), job.get("company",""), job.get("location",""), job.get("description","")),
             )
             self._conn.commit()
+
+            # Vector store (inside lock to prevent concurrent ChromaDB access)
+            if self._collection:
+                try:
+                    text = f"{job.get('title','')} {job.get('company','')} {job.get('location','')} {job.get('description','')[:500]}"
+                    self._collection.add(
+                        documents=[text],
+                        metadatas=[{"job_id": job_id, "title": job.get("title", ""), "company": job.get("company", "")}],
+                        ids=[job_id],
+                    )
+                except Exception:
+                    pass
 
         logger.info(f"💾 Cached: {job.get('title','?')[:40]} @ {job.get('company','?')[:20]}")
         return True
@@ -376,7 +375,7 @@ class JobCache:
                 if existing:
                     continue
                 job["id"] = job_id
-                job.setdefault("cached_at", datetime.now().isoformat())
+                job.setdefault("cached_at", datetime.now(timezone.utc).isoformat())
                 self._insert_job(cur, job)
                 added += 1
 

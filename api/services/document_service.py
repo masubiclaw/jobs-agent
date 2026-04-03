@@ -261,7 +261,7 @@ class DocumentService:
             "email": profile.email,
             "phone": profile.phone,
             "location": profile.location,
-            "skills": [{"name": s.name, "level": s.level.value if hasattr(s.level, 'value') else s.level} for s in profile.skills],
+            "skills": [{"name": s.name, "level": getattr(s.level, 'value', None) or getattr(s, 'level', 'intermediate') or 'intermediate'} for s in profile.skills],
             "experience": [
                 {
                     "title": e.title,

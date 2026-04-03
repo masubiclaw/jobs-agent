@@ -109,6 +109,13 @@ async def change_password(
     """Change the current user's password."""
     user_store = get_user_store()
 
+    # Check new password differs from current
+    if data.current_password == data.new_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must differ from current password"
+        )
+
     # Verify current password
     authed = user_store.authenticate(current_user.email, data.current_password)
     if not authed:

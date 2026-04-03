@@ -56,24 +56,24 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     return encoded_jwt
 
 
-def verify_token(token: str) -> Optional[dict]:
+def verify_token(token: str) -> tuple:
     """Verify and decode a JWT token.
-    
+
     Args:
         token: JWT token string
-        
+
     Returns:
-        Decoded payload dict if valid, None otherwise
+        Tuple of (payload, error_type) where error_type is None, "expired", or "invalid"
     """
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        return payload
+        return (payload, None)
     except jwt.ExpiredSignatureError:
         # Token has expired
-        return None
+        return (None, "expired")
     except JWTError:
         # All other JWT errors (invalid signature, malformed token, etc.)
-        return None
+        return (None, "invalid")
 
 
 async def get_current_user(
@@ -90,17 +90,27 @@ async def get_current_user(
     Raises:
         HTTPException: If token is invalid or user not found
     """
+    token = credentials.credentials
+    payload, error_type = verify_token(token)
+
+    if payload is None:
+        if error_type == "expired":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has expired",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    
-    token = credentials.credentials
-    payload = verify_token(token)
-    
-    if payload is None:
-        raise credentials_exception
     
     user_id: str = payload.get("sub")
     if user_id is None:

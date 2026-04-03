@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -26,11 +27,13 @@ LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", 300))
 class ProfileService:
     """
     Multi-user profile service.
-    
+
     Stores profiles in user-specific directories:
     .job_cache/users/{user_id}/profiles/{profile_id}.toon
     """
-    
+
+    _create_lock = threading.Lock()
+
     def __init__(self, base_dir: Path = None):
         self.base_dir = Path(base_dir) if base_dir else Path(".job_cache/users")
         self.base_dir.mkdir(parents=True, exist_ok=True)
@@ -191,59 +194,60 @@ class ProfileService:
         preferences: Optional[dict] = None,
     ) -> Optional[ProfileResponse]:
         """Create a new profile."""
-        # Generate ID — strip all non-alphanumeric chars except underscores/hyphens
-        import re as _re
-        sanitized = _re.sub(r'[^a-z0-9_-]', '', name.lower().replace(" ", "_"))[:20]
-        profile_id = sanitized if sanitized else "profile"
-        
-        # Check if exists
-        existing = self._load_profile(user_id, profile_id)
-        if existing:
-            # Append number
-            i = 1
-            while self._load_profile(user_id, f"{profile_id}_{i}"):
-                i += 1
-            profile_id = f"{profile_id}_{i}"
-        
-        profile = {
-            "id": profile_id,
-            "user_id": user_id,
-            "name": name,
-            "email": email,
-            "phone": phone,
-            "location": location,
-            "created_at": datetime.now().isoformat(),
-            "updated_at": datetime.now().isoformat(),
-            "skills": [s.dict() if hasattr(s, 'dict') else s for s in skills] if skills else [],
-            "experience": [e.dict() if hasattr(e, 'dict') else e for e in experience] if experience else [],
-            "education": [],
-            "certifications": [],
-            "preferences": (preferences.dict() if hasattr(preferences, 'dict') else preferences) if preferences else {
-                "target_roles": [],
-                "target_locations": [],
-                "remote_preference": "hybrid",
-                "salary_min": None,
-                "salary_max": None,
-                "job_types": ["full-time"],
-                "industries": [],
-                "excluded_companies": [],
-            },
-            "resume": {
-                "summary": "",
-                "content": "",
-                "last_updated": None,
-            },
-            "notes": "",
-        }
-        
-        self._save_profile(user_id, profile)
-        
-        # Set as active if first profile
-        if len(self.list_profiles(user_id)) == 1:
-            self._set_active_profile_id(user_id, profile_id)
-        
+        with self._create_lock:
+            # Generate ID — strip all non-alphanumeric chars except underscores/hyphens
+            import re as _re
+            sanitized = _re.sub(r'[^a-z0-9_-]', '', name.lower().replace(" ", "_"))[:20]
+            profile_id = sanitized if sanitized else "profile"
+
+            # Check if exists
+            existing = self._load_profile(user_id, profile_id)
+            if existing:
+                # Append number
+                i = 1
+                while self._load_profile(user_id, f"{profile_id}_{i}"):
+                    i += 1
+                profile_id = f"{profile_id}_{i}"
+
+            profile = {
+                "id": profile_id,
+                "user_id": user_id,
+                "name": name,
+                "email": email,
+                "phone": phone,
+                "location": location,
+                "created_at": datetime.now().isoformat(),
+                "updated_at": datetime.now().isoformat(),
+                "skills": [s.dict() if hasattr(s, 'dict') else s for s in skills] if skills else [],
+                "experience": [e.dict() if hasattr(e, 'dict') else e for e in experience] if experience else [],
+                "education": [],
+                "certifications": [],
+                "preferences": (preferences.dict() if hasattr(preferences, 'dict') else preferences) if preferences else {
+                    "target_roles": [],
+                    "target_locations": [],
+                    "remote_preference": "hybrid",
+                    "salary_min": None,
+                    "salary_max": None,
+                    "job_types": ["full-time"],
+                    "industries": [],
+                    "excluded_companies": [],
+                },
+                "resume": {
+                    "summary": "",
+                    "content": "",
+                    "last_updated": None,
+                },
+                "notes": "",
+            }
+
+            self._save_profile(user_id, profile)
+
+            # Set as active if first profile
+            if len(self.list_profiles(user_id)) == 1:
+                self._set_active_profile_id(user_id, profile_id)
+
         logger.info(f"Created profile: {name} ({profile_id}) for user {user_id}")
-        
+
         active_id = self._get_active_profile_id(user_id)
         return self._to_response(profile, is_active=profile_id == active_id)
     
@@ -278,7 +282,11 @@ class ProfileService:
         # Update basic fields
         for field in ["name", "email", "phone", "location", "notes"]:
             if field in kwargs and kwargs[field] is not None:
-                profile[field] = kwargs[field]
+                value = kwargs[field]
+                # Strip HTML tags to prevent XSS
+                if isinstance(value, str):
+                    value = re.sub(r'<[^>]+>', '', value)
+                profile[field] = value
         
         # Update skills
         if "skills" in kwargs and kwargs["skills"] is not None:
@@ -384,11 +392,13 @@ class ProfileService:
         """Extract text from PDF bytes using PyMuPDF."""
         import fitz
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        text = ""
-        for page in doc:
-            text += page.get_text()
-        doc.close()
-        return text
+        try:
+            text = ""
+            for page in doc:
+                text += page.get_text()
+            return text
+        finally:
+            doc.close()
 
     def _parse_resume_with_llm(self, text: str) -> dict:
         """Parse resume/profile text into structured data using Ollama."""

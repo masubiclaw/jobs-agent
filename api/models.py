@@ -62,10 +62,20 @@ class PasswordChange(BaseModel):
 
 # ── Profile Models ───────────────────────────────────────────
 
+_VALID_SKILL_LEVELS = ("beginner", "intermediate", "advanced", "expert", "native")
+
+
 class Skill(BaseModel):
     name: str
     level: str = "intermediate"
     added_at: Optional[datetime] = None
+
+    @field_validator('level')
+    @classmethod
+    def level_must_be_valid(cls, v: str) -> str:
+        if v not in _VALID_SKILL_LEVELS:
+            raise ValueError(f"Skill level must be one of: {', '.join(_VALID_SKILL_LEVELS)}")
+        return v
 
 
 class Experience(BaseModel):
@@ -120,7 +130,7 @@ class ProfileCreate(BaseModel):
 
 class ProfileUpdate(BaseModel):
     name: Optional[str] = None
-    email: Optional[str] = None
+    email: Optional[EmailStr] = None
     phone: Optional[str] = None
     location: Optional[str] = None
     skills: Optional[List[Skill]] = None
@@ -128,6 +138,13 @@ class ProfileUpdate(BaseModel):
     preferences: Optional[Preferences] = None
     resume: Optional[Resume] = None
     notes: Optional[str] = None
+
+    @field_validator('name')
+    @classmethod
+    def name_not_empty(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not v.strip():
+            raise ValueError('Profile name cannot be empty')
+        return v.strip() if v is not None else v
 
 
 class ProfileListItem(BaseModel):
@@ -285,7 +302,7 @@ class PipelineRunRequest(BaseModel):
 
 class PipelineSchedulerUpdate(BaseModel):
     enabled: bool
-    interval_hours: float = 24.0
+    interval_hours: float = Field(24.0, gt=0, le=8760)
     start_time: Optional[str] = None  # HH:MM format, e.g. "09:00"
 
 

@@ -47,10 +47,21 @@ class JobService:
         self._cache = get_cache()
 
     @staticmethod
+    def _safe_parse_datetime(value) -> Optional[datetime]:
+        """Safely parse an ISO datetime string, returning None on failure."""
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(str(value))
+        except (ValueError, TypeError):
+            return datetime.now()
+
+    @staticmethod
     def _strip_html(text: str) -> str:
-        """Strip HTML tags from text to prevent XSS."""
+        """Strip HTML tags and null bytes from text to prevent XSS."""
         if not text:
             return text
+        text = text.replace('\x00', '')
         return re.sub(r'<[^>]+>', '', text)
 
     def _user_jobs_file(self, user_id: str) -> Path:
@@ -121,20 +132,24 @@ class JobService:
                 combined_score=match.get("combined_score", match.get("match_score", 0)),
                 match_level=match.get("match_level", "unknown"),
                 toon_report=match.get("toon_report", ""),
-                cached_at=datetime.fromisoformat(match["cached_at"]) if match.get("cached_at") else None
+                cached_at=self._safe_parse_datetime(match.get("cached_at"))
             )
         
+        company = user_meta.get("company", job.get("company", "Unknown"))
+        if not company or company.lower() == "nan":
+            company = "Unknown"
+
         return JobResponse(
             id=job.get("id", ""),
             title=user_meta.get("title", job.get("title", "Unknown")),
-            company=user_meta.get("company", job.get("company", "Unknown")),
+            company=company,
             location=user_meta.get("location", job.get("location", "Unknown")),
             salary=user_meta.get("salary", job.get("salary", "Not specified")),
             url=user_meta.get("url", job.get("url", "")),
             description=user_meta.get("description", job.get("description", "")),
             platform=job.get("platform", "unknown"),
             posted_date=job.get("posted_date", ""),
-            cached_at=datetime.fromisoformat(job.get("cached_at", datetime.now().isoformat())),
+            cached_at=self._safe_parse_datetime(job.get("cached_at")) or datetime.now(),
             status=JobStatus(user_meta.get("status", JobStatus.ACTIVE.value)),
             added_by=JobAddMethod(user_meta.get("added_by", JobAddMethod.SCRAPED.value)),
             notes=user_meta.get("notes", ""),

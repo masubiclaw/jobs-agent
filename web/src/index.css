@@ -4,7 +4,7 @@
 
 @layer base {
   body {
-    @apply bg-gray-50 text-gray-900 antialiased;
+    @apply bg-gray-50 text-gray-900 antialiased dark:bg-gray-900 dark:text-gray-100;
   }
 }
 
@@ -12,28 +12,63 @@
   .btn {
     @apply px-4 py-2 rounded-lg font-medium transition-colors duration-200;
   }
-  
+
   .btn-primary {
-    @apply bg-primary-600 text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2;
+    @apply bg-primary-600 text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900;
   }
-  
+
   .btn-secondary {
-    @apply bg-gray-200 text-gray-800 hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2;
+    @apply bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900;
   }
-  
+
   .btn-danger {
-    @apply bg-red-600 text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2;
+    @apply bg-red-600 text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900;
   }
-  
+
   .input {
-    @apply w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent;
+    @apply w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100 dark:placeholder-gray-400;
   }
-  
+
   .label {
-    @apply block text-sm font-medium text-gray-700 mb-1;
+    @apply block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1;
   }
-  
+
   .card {
-    @apply bg-white rounded-xl shadow-sm border border-gray-200 p-6;
+    @apply bg-white rounded-xl shadow-sm border border-gray-200 p-6 dark:bg-gray-800 dark:border-gray-700;
   }
 }
+
+/* Dark mode overrides for Tailwind gray utilities */
+.dark .bg-white { background-color: #1f2937 !important; }
+.dark .bg-gray-50 { background-color: #111827 !important; }
+.dark .bg-gray-100 { background-color: #1f2937 !important; }
+.dark .bg-gray-200 { background-color: #374151 !important; }
+.dark .text-gray-900 { color: #f3f4f6 !important; }
+.dark .text-gray-800 { color: #e5e7eb !important; }
+.dark .text-gray-700 { color: #d1d5db !important; }
+.dark .text-gray-600 { color: #9ca3af !important; }
+.dark .text-gray-500 { color: #9ca3af !important; }
+.dark .border-gray-200 { border-color: #374151 !important; }
+.dark .border-gray-300 { border-color: #4b5563 !important; }
+.dark .border-gray-100 { border-color: #374151 !important; }
+.dark .divide-gray-200 > :not([hidden]) ~ :not([hidden]) { border-color: #374151 !important; }
+.dark .ring-offset-white { --tw-ring-offset-color: #1f2937 !important; }
+.dark .bg-primary-50 { background-color: rgba(37, 99, 235, 0.1) !important; }
+.dark .bg-primary-100 { background-color: rgba(37, 99, 235, 0.15) !important; }
+.dark .text-primary-600 { color: #60a5fa !important; }
+.dark .text-primary-700 { color: #93c5fd !important; }
+.dark .border-primary-200 { border-color: rgba(37, 99, 235, 0.3) !important; }
+.dark .bg-green-50 { background-color: rgba(34, 197, 94, 0.1) !important; }
+.dark .bg-green-100 { background-color: rgba(34, 197, 94, 0.15) !important; }
+.dark .text-green-700 { color: #86efac !important; }
+.dark .bg-red-50 { background-color: rgba(239, 68, 68, 0.1) !important; }
+.dark .bg-red-100 { background-color: rgba(239, 68, 68, 0.15) !important; }
+.dark .text-red-700 { color: #fca5a5 !important; }
+.dark .bg-yellow-50 { background-color: rgba(234, 179, 8, 0.1) !important; }
+.dark .bg-yellow-100 { background-color: rgba(234, 179, 8, 0.15) !important; }
+.dark .text-yellow-700 { color: #fde047 !important; }
+.dark .bg-blue-50 { background-color: rgba(59, 130, 246, 0.1) !important; }
+.dark .bg-blue-100 { background-color: rgba(59, 130, 246, 0.15) !important; }
+.dark .text-blue-700 { color: #93c5fd !important; }
+.dark .shadow-sm { box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.3) !important; }
+.dark .shadow-lg { box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.4) !important; }

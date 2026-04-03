@@ -220,6 +220,11 @@ async def run_pipeline(
     current_user: UserResponse = Depends(get_current_admin_user),
 ) -> dict:
     """Trigger a manual pipeline run."""
+    if not request.steps:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one step required"
+        )
     service = get_pipeline_service()
     if service._is_running:
         raise HTTPException(

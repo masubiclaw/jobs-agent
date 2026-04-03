@@ -134,6 +134,15 @@ class PipelineService:
             self._user_id = user_id
 
         if start_time:
+            # Validate HH:MM format
+            import re as _re
+            if not _re.match(r'^\d{1,2}:\d{2}$', start_time):
+                raise ValueError(f"Invalid start_time format: '{start_time}'. Expected HH:MM.")
+            _hour, _minute = map(int, start_time.split(":"))
+            if not (0 <= _hour <= 23 and 0 <= _minute <= 59):
+                raise ValueError(f"Invalid start_time: hour must be 0-23, minute must be 0-59")
+
+        if start_time:
             # Parse HH:MM and schedule first run at that time today (or tomorrow if past)
             try:
                 hour, minute = map(int, start_time.split(":"))
@@ -172,7 +181,7 @@ class PipelineService:
                 # (e.g. from start_time). On subsequent iterations, schedule
                 # the next run relative to now.
                 if self._next_run and self._next_run > datetime.now():
-                    wait_seconds = (self._next_run - datetime.now()).total_seconds()
+                    wait_seconds = max(0, (self._next_run - datetime.now()).total_seconds())
                 else:
                     wait_seconds = self._interval_hours * 3600
                     self._next_run = datetime.now() + timedelta(seconds=wait_seconds)
@@ -184,16 +193,17 @@ class PipelineService:
 
                 if self._scheduler_enabled and not self._is_running:
                     await self._execute_pipeline(
-                        steps=["search", "clean", "fetch", "match", "generate"]
+                        steps=["search", "clean", "fetch", "match", "generate"],
+                        user_id=self._user_id,
                     )
         except asyncio.CancelledError:
             pass
         except Exception as e:
             self._add_log("ERROR", f"Scheduler error: {e}")
 
-    def _get_user_search_context(self) -> Dict[str, Any]:
+    def _get_user_search_context(self, user_id: Optional[str] = None) -> Dict[str, Any]:
         """Get search context from user's API profile, falling back to global store."""
-        if self._user_id:
+        if user_id:
             try:
                 profile_service = ProfileService()
                 profile = profile_service.get_active_profile(self._user_id)
@@ -222,10 +232,9 @@ class PipelineService:
         if self._is_running:
             self._add_log("WARNING", "Pipeline already running, skipping")
             return
-        self._user_id = user_id
-        await self._execute_pipeline(steps)
+        await self._execute_pipeline(steps, user_id=user_id)
 
-    async def _execute_pipeline(self, steps: List[str]):
+    async def _execute_pipeline(self, steps: List[str], user_id: Optional[str] = None):
         self._is_running = True
         run_id = hashlib.md5(datetime.now().isoformat().encode()).hexdigest()[:10]
         start_time = time.time()
@@ -252,7 +261,7 @@ class PipelineService:
             if "search" in steps:
                 self._current_step = "search"
                 self._add_log("INFO", "Step: SEARCH")
-                jobs_found = await self._run_search_step()
+                jobs_found = await self._run_search_step(user_id=user_id)
                 run_record["jobs_found"] = jobs_found
                 self._add_log("INFO", f"Search complete: {jobs_found} jobs found")
 
@@ -303,7 +312,7 @@ class PipelineService:
             runs.append(run_record)
             self._save_history(runs)
 
-    async def _run_search_step(self) -> int:
+    async def _run_search_step(self, user_id: Optional[str] = None) -> int:
         """Run job search. Returns number of jobs found."""
         try:
             from job_agent_coordinator.tools.jobspy_tools import (
@@ -315,7 +324,7 @@ class PipelineService:
                 self._add_log("WARNING", "JobSpy not available, skipping search")
                 return 0
 
-            context = self._get_user_search_context()
+            context = self._get_user_search_context(user_id=user_id)
             exclusions = context.get("excluded_companies", [])
 
             # Build search terms from profile target_roles, fall back to defaults
@@ -396,7 +405,6 @@ class PipelineService:
                 if not url:
                     if cache.remove(job["id"]):
                         removed += 1
-                    cache.clear_matches(job["id"])
 
             return removed
         except Exception as e:
