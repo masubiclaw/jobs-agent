@@ -531,20 +531,23 @@ class ProfileService:
             doc.close()
 
     def _parse_resume_with_llm(self, text: str) -> dict:
-        """Parse resume/profile text into structured data using Ollama."""
-        import requests
+        """Parse resume into structured data.
 
-        prompt = f"""Parse this resume into structured JSON format. Extract ALL information you can find.
-IMPORTANT: For experience descriptions, include EVERY bullet point, achievement, metric, and detail from the resume. Do NOT summarize or condense — preserve the full content.
+        Two-phase approach:
+        1. LLM extracts metadata (name, dates, companies, skills) — small output
+        2. Raw text matching extracts full descriptions — no LLM truncation
+        """
+        # Phase 1: LLM extracts structure (short output — no descriptions)
+        prompt = f"""Extract structured metadata from this resume. Do NOT include descriptions — just names, dates, and skills.
 
 RESUME TEXT:
 {text[:15000]}
 
-OUTPUT FORMAT (JSON only, no other text):
+OUTPUT FORMAT (JSON only):
 {{
     "name": "Full Name",
-    "email": "email@example.com",
-    "phone": "phone number or empty string",
+    "email": "email or empty",
+    "phone": "phone or empty",
     "location": "City, State/Country",
     "summary": "2-3 sentence professional summary",
     "skills": [
@@ -554,61 +557,139 @@ OUTPUT FORMAT (JSON only, no other text):
         {{
             "title": "Job Title",
             "company": "Company Name",
-            "start_date": "YYYY-MM or just YYYY",
+            "start_date": "YYYY-MM or YYYY",
             "end_date": "YYYY-MM or present",
-            "description": "FULL description with ALL bullet points, achievements, metrics, and details from the resume. Use newlines to separate bullets. Do NOT summarize."
+            "description": ""
         }}
     ],
     "education": [
-        {{
-            "degree": "Degree Type",
-            "field": "Field of Study",
-            "institution": "School Name",
-            "year": "Graduation Year"
-        }}
+        {{"degree": "Degree Type", "field": "Field", "institution": "School", "year": "Year"}}
     ],
     "certifications": [
-        {{"name": "Certification Name", "issuer": "Issuing Org", "year": "Year or empty"}}
+        {{"name": "Name", "issuer": "Org", "year": "Year or empty"}}
     ],
     "preferences": {{
-        "target_roles": ["list of job titles this person would be good for"],
-        "remote_preference": "remote|hybrid|onsite (infer from resume if possible)"
+        "target_roles": ["3-5 suggested job titles"],
+        "remote_preference": "hybrid"
     }}
 }}
 
-IMPORTANT:
-- For skills, infer proficiency based on context (years of experience, certifications, etc.)
-- Extract ALL skills mentioned, including tools, languages, frameworks
-- For target_roles, suggest 3-5 roles this person is qualified for
-- For experience descriptions: include EVERY bullet point and achievement verbatim. Use \\n between bullets. Do NOT summarize or shorten.
-- Output ONLY valid JSON, no explanations"""
+RULES:
+- Extract ALL skills (tools, languages, frameworks, methodologies)
+- Extract ALL experience roles with exact titles, companies, and dates
+- Leave description EMPTY (will be filled separately)
+- Output ONLY valid JSON"""
 
         try:
             from job_agent_coordinator.services.llm_queue import llm_request, LLMQueue, Priority
-            # Try queue first, fall back to direct call if it fails
             try:
                 result = llm_request(
                     request_type="resume_parse",
                     model=PARSER_MODEL,
                     prompt=prompt,
-                    options={"temperature": 0.1},
+                    options={"temperature": 0.1, "num_predict": 4000},
                     timeout=LLM_TIMEOUT,
                     priority=Priority.USER_INTERACTIVE,
                 )
             except Exception as queue_err:
                 logger.warning(f"Queue call failed ({queue_err}), calling Ollama directly")
                 result = LLMQueue._call_ollama(
-                    PARSER_MODEL, prompt, {"temperature": 0.1}, LLM_TIMEOUT
+                    PARSER_MODEL, prompt, {"temperature": 0.1, "num_predict": 4000}, LLM_TIMEOUT
                 )
             json_match = re.search(r'\{[\s\S]*\}', result)
             if json_match:
-                return json.loads(json_match.group())
+                parsed = json.loads(json_match.group())
+                # Phase 2: Fill in descriptions from raw text
+                self._fill_descriptions_from_text(parsed, text)
+                return parsed
             else:
                 logger.error("Could not find JSON in LLM response")
                 return {}
         except Exception as e:
             logger.error(f"LLM parsing failed: {e}")
             return {}
+
+    @staticmethod
+    def _fill_descriptions_from_text(parsed: dict, raw_text: str):
+        """Extract full role descriptions from raw resume text.
+
+        Matches each role (title + company) in the text and grabs everything
+        between that role header and the next role/section header.
+        """
+        experiences = parsed.get("experience", [])
+        if not experiences:
+            return
+
+        lines = raw_text.split('\n')
+        text_lower = raw_text.lower()
+
+        for exp in experiences:
+            title = exp.get("title", "")
+            company = exp.get("company", "")
+            if not title:
+                continue
+
+            # Find where this role starts in the raw text
+            # Try exact title match, then partial
+            start_idx = -1
+            for marker in [
+                f"{title}",
+                title.split(",")[0].strip(),  # First part before comma
+                title.split("-")[0].strip(),   # First part before dash
+            ]:
+                idx = text_lower.find(marker.lower())
+                if idx >= 0:
+                    start_idx = idx
+                    break
+
+            if start_idx < 0:
+                continue
+
+            # Find where the next role starts (look for the next experience title or section header)
+            end_idx = len(raw_text)
+            for other_exp in experiences:
+                if other_exp is exp:
+                    continue
+                other_title = other_exp.get("title", "")
+                if other_title:
+                    other_idx = text_lower.find(other_title.lower(), start_idx + len(title))
+                    if other_idx > start_idx and other_idx < end_idx:
+                        end_idx = other_idx
+
+            # Also check for section headers that end the experience section
+            for section in ["education", "skills", "certifications", "publications", "awards", "projects"]:
+                section_idx = text_lower.find(section, start_idx + len(title))
+                if section_idx > start_idx and section_idx < end_idx:
+                    end_idx = section_idx
+
+            # Extract the block and clean it
+            block = raw_text[start_idx:end_idx].strip()
+
+            # Remove the title/company/date header lines, keep the bullet points
+            desc_lines = []
+            header_done = False
+            for line in block.split('\n'):
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                # Skip header lines (title, company, dates)
+                if not header_done:
+                    if title.lower()[:20] in stripped.lower() or company.lower() in stripped.lower():
+                        continue
+                    # Date-like line
+                    if any(m in stripped.lower() for m in ['present', '2025', '2024', '2023', '2022', '2021', '2020', '2019', '2018', '2017', '2016', '2015', '2014', '2013', '2012']):
+                        if len(stripped) < 40:  # Short date line
+                            header_done = True
+                            continue
+                    header_done = True
+
+                # Keep content lines
+                if stripped.startswith(('-', '•', '·', '*', '–', '►', '▪')) or len(stripped) > 15:
+                    desc_lines.append(stripped)
+
+            if desc_lines:
+                exp["description"] = '\n'.join(desc_lines)
+                logger.debug(f"Extracted {len(desc_lines)} lines for {title[:30]}")
 
     def _create_profile_from_parsed(self, user_id: str, parsed: dict) -> Optional[ProfileResponse]:
         """Create a profile from LLM-parsed resume data."""
