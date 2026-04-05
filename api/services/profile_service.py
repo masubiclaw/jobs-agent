@@ -535,9 +535,10 @@ class ProfileService:
         import requests
 
         prompt = f"""Parse this resume into structured JSON format. Extract ALL information you can find.
+IMPORTANT: For experience descriptions, include EVERY bullet point, achievement, metric, and detail from the resume. Do NOT summarize or condense — preserve the full content.
 
 RESUME TEXT:
-{text[:12000]}
+{text[:15000]}
 
 OUTPUT FORMAT (JSON only, no other text):
 {{
@@ -555,7 +556,7 @@ OUTPUT FORMAT (JSON only, no other text):
             "company": "Company Name",
             "start_date": "YYYY-MM or just YYYY",
             "end_date": "YYYY-MM or present",
-            "description": "Brief description of role and achievements"
+            "description": "FULL description with ALL bullet points, achievements, metrics, and details from the resume. Use newlines to separate bullets. Do NOT summarize."
         }}
     ],
     "education": [
@@ -579,6 +580,7 @@ IMPORTANT:
 - For skills, infer proficiency based on context (years of experience, certifications, etc.)
 - Extract ALL skills mentioned, including tools, languages, frameworks
 - For target_roles, suggest 3-5 roles this person is qualified for
+- For experience descriptions: include EVERY bullet point and achievement verbatim. Use \\n between bullets. Do NOT summarize or shorten.
 - Output ONLY valid JSON, no explanations"""
 
         try:
