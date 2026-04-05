@@ -503,7 +503,7 @@ class PipelineService:
         try:
             from job_agent_coordinator.tools.resume_tools import generate_application_package
 
-            matches = cache.list_matches(min_score=60, limit=100)
+            matches = cache.list_matches(min_score=60, limit=500)
             generated = 0
 
             # Load existing documents to check recency
@@ -524,7 +524,8 @@ class PipelineService:
                 except Exception as e:
                     self._add_log("DEBUG", f"Could not check existing docs: {e}")
 
-            for match in matches[:10]:
+            self._add_log("INFO", f"Generate step: {len(matches)} matches >= 60%, {len(recent_job_ids)} already generated in 24h")
+            for match in matches:
                 job_id = match.get("job_id", "")
 
                 # Skip if docs were generated for this job in the last 24h
