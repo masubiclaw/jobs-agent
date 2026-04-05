@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # LLM config for resume parsing
 OLLAMA_BASE_URL = os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
 PARSER_MODEL = os.getenv("OLLAMA_FAST_MODEL", "gemma3:12b")
-LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", 300))
+LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", 600))
 
 
 class ProfileService:
