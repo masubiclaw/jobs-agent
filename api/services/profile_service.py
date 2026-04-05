@@ -452,15 +452,22 @@ IMPORTANT:
 - Output ONLY valid JSON, no explanations"""
 
         try:
-            from job_agent_coordinator.services.llm_queue import llm_request, Priority
-            result = llm_request(
-                request_type="resume_parse",
-                model=PARSER_MODEL,
-                prompt=prompt,
-                options={"temperature": 0.1},
-                timeout=LLM_TIMEOUT,
-                priority=Priority.USER_INTERACTIVE,
-            )
+            from job_agent_coordinator.services.llm_queue import llm_request, LLMQueue, Priority
+            # Try queue first, fall back to direct call if it fails
+            try:
+                result = llm_request(
+                    request_type="resume_parse",
+                    model=PARSER_MODEL,
+                    prompt=prompt,
+                    options={"temperature": 0.1},
+                    timeout=LLM_TIMEOUT,
+                    priority=Priority.USER_INTERACTIVE,
+                )
+            except Exception as queue_err:
+                logger.warning(f"Queue call failed ({queue_err}), calling Ollama directly")
+                result = LLMQueue._call_ollama(
+                    PARSER_MODEL, prompt, {"temperature": 0.1}, LLM_TIMEOUT
+                )
             json_match = re.search(r'\{[\s\S]*\}', result)
             if json_match:
                 return json.loads(json_match.group())
