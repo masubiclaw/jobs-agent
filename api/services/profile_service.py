@@ -613,83 +613,97 @@ RULES:
     def _fill_descriptions_from_text(parsed: dict, raw_text: str):
         """Extract full role descriptions from raw resume text.
 
-        Matches each role (title + company) in the text and grabs everything
-        between that role header and the next role/section header.
+        Strategy: find each company name in order, then grab all content
+        lines (bullets, paragraphs) until the next company or section.
+        Uses sequential search (search_from cursor) to handle duplicate
+        company names correctly.
         """
         experiences = parsed.get("experience", [])
         if not experiences:
             return
 
-        lines = raw_text.split('\n')
         text_lower = raw_text.lower()
 
-        for exp in experiences:
-            title = exp.get("title", "")
-            company = exp.get("company", "")
-            if not title:
+        # Build ordered list of anchor positions — find each role in sequence
+        anchors = []  # [(start_idx, exp_index), ...]
+        search_from = 0
+
+        for i, exp in enumerate(experiences):
+            company = (exp.get("company") or "").strip()
+            title = (exp.get("title") or "").strip()
+            if not company and not title:
                 continue
 
-            # Find where this role starts in the raw text
-            # Try exact title match, then partial
-            start_idx = -1
+            # Try multiple search strategies in order of specificity
+            found = -1
             for marker in [
-                f"{title}",
-                title.split(",")[0].strip(),  # First part before comma
-                title.split("-")[0].strip(),   # First part before dash
+                title,                          # Full title
+                f"{title.split()[0]} {company}" if title else company,  # First word of title + company
+                company,                        # Just company name
             ]:
-                idx = text_lower.find(marker.lower())
+                if not marker:
+                    continue
+                idx = text_lower.find(marker.lower(), search_from)
                 if idx >= 0:
-                    start_idx = idx
+                    found = idx
                     break
 
-            if start_idx < 0:
-                continue
+            if found >= 0:
+                anchors.append((found, i))
+                search_from = found + max(len(title), len(company), 10)
 
-            # Find where the next role starts (look for the next experience title or section header)
-            end_idx = len(raw_text)
-            for other_exp in experiences:
-                if other_exp is exp:
-                    continue
-                other_title = other_exp.get("title", "")
-                if other_title:
-                    other_idx = text_lower.find(other_title.lower(), start_idx + len(title))
-                    if other_idx > start_idx and other_idx < end_idx:
-                        end_idx = other_idx
+        if not anchors:
+            return
 
-            # Also check for section headers that end the experience section
-            for section in ["education", "skills", "certifications", "publications", "awards", "projects"]:
-                section_idx = text_lower.find(section, start_idx + len(title))
-                if section_idx > start_idx and section_idx < end_idx:
-                    end_idx = section_idx
+        # Sort by position (should already be in order)
+        anchors.sort(key=lambda x: x[0])
 
-            # Extract the block and clean it
-            block = raw_text[start_idx:end_idx].strip()
+        # Section headers that end the experience section
+        section_headers = ['education', 'skills', 'certifications', 'publications',
+                          'awards', 'projects', 'languages', 'interests', 'references']
 
-            # Remove the title/company/date header lines, keep the bullet points
+        # Extract text between each anchor
+        for anchor_idx, (start_pos, exp_idx) in enumerate(anchors):
+            # End is the next anchor, or end of text
+            if anchor_idx + 1 < len(anchors):
+                end_pos = anchors[anchor_idx + 1][0]
+            else:
+                end_pos = len(raw_text)
+
+            # Also check for section headers
+            for header in section_headers:
+                h_idx = text_lower.find(header, start_pos + 20)
+                if 0 < h_idx < end_pos:
+                    end_pos = h_idx
+
+            block = raw_text[start_pos:end_pos]
+
+            # Extract content lines, skipping the header (title/company/date lines)
             desc_lines = []
-            header_done = False
+            past_header = False
             for line in block.split('\n'):
                 stripped = line.strip()
                 if not stripped:
                     continue
-                # Skip header lines (title, company, dates)
-                if not header_done:
-                    if title.lower()[:20] in stripped.lower() or company.lower() in stripped.lower():
-                        continue
-                    # Date-like line
-                    if any(m in stripped.lower() for m in ['present', '2025', '2024', '2023', '2022', '2021', '2020', '2019', '2018', '2017', '2016', '2015', '2014', '2013', '2012']):
-                        if len(stripped) < 40:  # Short date line
-                            header_done = True
-                            continue
-                    header_done = True
 
-                # Keep content lines
-                if stripped.startswith(('-', '•', '·', '*', '–', '►', '▪')) or len(stripped) > 15:
+                # Skip first few lines (title, company, location, date range)
+                if not past_header:
+                    title_lower = (experiences[exp_idx].get("title") or "").lower()
+                    company_lower = (experiences[exp_idx].get("company") or "").lower()
+                    if (title_lower[:15] in stripped.lower()
+                            or company_lower in stripped.lower()
+                            or len(stripped) < 30):
+                        continue
+                    past_header = True
+
+                # Keep bullet points and substantial content lines
+                if (stripped.startswith(('-', '•', '·', '*', '–', '►', '▪', '●'))
+                        or len(stripped) > 20):
                     desc_lines.append(stripped)
 
             if desc_lines:
-                exp["description"] = '\n'.join(desc_lines)
-                logger.debug(f"Extracted {len(desc_lines)} lines for {title[:30]}")
+                experiences[exp_idx]["description"] = '\n'.join(desc_lines)
+                logger.info(f"Extracted {len(desc_lines)} lines for {experiences[exp_idx].get('title','?')[:40]}")
 
     def _create_profile_from_parsed(self, user_id: str, parsed: dict) -> Optional[ProfileResponse]:
         """Create a profile from LLM-parsed resume data."""
