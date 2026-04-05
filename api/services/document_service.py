@@ -140,20 +140,26 @@ class DocumentService:
                     profile_dict, job_dict
                 )
 
-                # Generate PDF with page fitting
+                # Generate PDF and enforce 1-page limit (up to 2 retries)
                 pdf_path = generate_resume_pdf(content, company, candidate_name)
-                is_single_page, page_count, _ = validate_single_page(pdf_path)
-
-                if not is_single_page:
-                    # Retry with conciseness feedback
+                for attempt in range(2):
+                    is_single_page, page_count, _ = validate_single_page(pdf_path)
+                    if is_single_page:
+                        break
+                    logger.info(f"Resume is {page_count} pages, retrying (attempt {attempt + 1})")
                     page_feedback = (
                         f"CRITICAL: The resume is {page_count} pages but MUST be exactly 1 page. "
-                        f"REDUCE content significantly. Use shorter bullet points, fewer items."
+                        f"REDUCE content: shorter bullets, fewer items per role, remove least relevant details."
                     )
                     gen_result = generate_resume_content(profile_dict, job_dict, feedback=page_feedback)
                     content = gen_result["content"]
                     critique = critique_document(content, "resume", profile_dict, job_dict)
                     pdf_path = generate_resume_pdf(content, company, candidate_name)
+
+                # Final page count for quality score
+                _, final_pages, _ = validate_single_page(pdf_path)
+                page_ok = (final_pages == 1)
+
             else:
                 # Cover letter generation
                 content, critique = _run_generation_loop("cover_letter", profile_dict, job_dict)
@@ -165,9 +171,30 @@ class DocumentService:
                     contact_parts.append(profile_dict["phone"])
                 contact_info = "  |  ".join(contact_parts) if contact_parts else ""
 
+                # Generate PDF and enforce 1-page limit (up to 2 retries)
                 pdf_path = generate_cover_letter_pdf(
                     content, company, candidate_name, contact_info=contact_info
                 )
+                for attempt in range(2):
+                    is_single_page, page_count, _ = validate_single_page(pdf_path)
+                    if is_single_page:
+                        break
+                    logger.info(f"Cover letter is {page_count} pages, retrying (attempt {attempt + 1})")
+                    from job_agent_coordinator.tools.document_generator import generate_cover_letter_content
+                    page_feedback = (
+                        f"CRITICAL: The cover letter is {page_count} pages but MUST be exactly 1 page. "
+                        f"REDUCE to 250-300 words. Be more concise."
+                    )
+                    gen_result = generate_cover_letter_content(profile_dict, job_dict, feedback=page_feedback)
+                    content = gen_result["content"]
+                    critique = critique_document(content, "cover_letter", profile_dict, job_dict)
+                    pdf_path = generate_cover_letter_pdf(
+                        content, company, candidate_name, contact_info=contact_info
+                    )
+
+                # Final page count for quality score
+                _, final_pages, _ = validate_single_page(pdf_path)
+                page_ok = (final_pages == 1)
 
             # Build response from critique object
             doc_id = self._generate_doc_id(job_id, profile_response.id, document_type)
@@ -176,8 +203,8 @@ class DocumentService:
                 fact_score=critique.fact_score,
                 keyword_score=critique.keyword_score,
                 ats_score=critique.ats_score,
-                length_score=100 if critique.length_compliant else 50,
-                overall_score=critique.overall_score
+                length_score=100 if (critique.length_compliant and page_ok) else 50,
+                overall_score=critique.overall_score if page_ok else max(critique.overall_score - 20, 0)
             )
 
             response = DocumentResponse(

@@ -499,15 +499,39 @@ class PipelineService:
             return 0
 
     async def _run_generate_step(self, cache) -> int:
-        """Generate documents for top matches. Returns count generated."""
+        """Generate documents for top matches. Skips jobs with docs generated in last 24h."""
         try:
             from job_agent_coordinator.tools.resume_tools import generate_application_package
 
             matches = cache.list_matches(min_score=60, limit=100)
             generated = 0
 
+            # Load existing documents to check recency
+            recent_job_ids = set()
+            if self._user_id:
+                try:
+                    from api.services.document_service import DocumentService
+                    doc_svc = DocumentService()
+                    existing_docs = doc_svc.list_documents(self._user_id, limit=500)
+                    cutoff = datetime.now() - timedelta(hours=24)
+                    for doc in existing_docs:
+                        try:
+                            doc_time = datetime.fromisoformat(doc.created_at) if isinstance(doc.created_at, str) else doc.created_at
+                            if doc_time > cutoff:
+                                recent_job_ids.add(doc.job_id)
+                        except (ValueError, TypeError):
+                            pass
+                except Exception as e:
+                    self._add_log("DEBUG", f"Could not check existing docs: {e}")
+
             for match in matches[:10]:
                 job_id = match.get("job_id", "")
+
+                # Skip if docs were generated for this job in the last 24h
+                if job_id in recent_job_ids:
+                    self._add_log("INFO", f"Skipping {job_id} — docs generated within 24h")
+                    continue
+
                 try:
                     result = await asyncio.to_thread(
                         generate_application_package, job_id, ""

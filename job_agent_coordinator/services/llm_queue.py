@@ -396,22 +396,21 @@ def llm_request(
     Safe to call from worker threads (asyncio.to_thread, FastAPI sync handlers).
     Submits the request to the async queue and blocks until the result is ready.
     """
-    # Prevent deadlock: if called from the main thread while an event loop is
-    # running, run_coroutine_threadsafe would block the loop forever.
-    if threading.current_thread() is threading.main_thread():
-        try:
-            asyncio.get_running_loop()
-            raise RuntimeError(
-                "llm_request() cannot be called from the main thread while an "
-                "asyncio event loop is running — this would deadlock. "
-                "Use 'await queue.submit(...)' or call from a worker thread."
-            )
-        except RuntimeError as e:
-            if "deadlock" in str(e):
-                raise
-            pass  # No running loop — safe to proceed
-
     queue = get_queue()
+
+    # Prevent deadlock: if this thread owns the event loop that the queue
+    # worker runs on, run_coroutine_threadsafe + future.result() would block forever.
+    try:
+        running_loop = asyncio.get_running_loop()
+        if running_loop is queue._loop:
+            raise RuntimeError(
+                "llm_request() cannot be called from the event loop thread — "
+                "this would deadlock. Use 'await queue.submit(...)' instead."
+            )
+    except RuntimeError as e:
+        if "deadlock" in str(e):
+            raise
+        # No running loop on this thread — safe to proceed
 
     # If the queue worker hasn't started yet (e.g., called outside API context),
     # fall back to a direct Ollama call.

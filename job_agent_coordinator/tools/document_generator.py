@@ -299,7 +299,7 @@ def _format_profile_for_prompt(profile: Dict[str, Any]) -> str:
 
     # Format experience
     experience_lines = []
-    for exp in profile.get("experience", [])[:6]:
+    for exp in profile.get("experience", []):
         title = exp.get("title", "")
         company = exp.get("company", "")
         start = exp.get("start_date", "")
@@ -494,15 +494,21 @@ FACTUAL ACCURACY RULES (CRITICAL - violations cause failure):
 5. Achievements MUST be derived from profile description text, not invented
 6. Do NOT add percentages, dollar amounts, or team sizes unless explicitly stated
 
-STRICT RULES:
-1. Include 3-4 most relevant roles with 3-4 bullets each
-2. Use EXACT dates from profile - format as "Mon YYYY" (e.g., "Aug 2025")
-3. Convert: "2025-08" → "Aug 2025", "present" → "Present"
-4. Do NOT change, estimate, or round any dates
-5. Start EVERY bullet with a strong ACTION VERB (Built, Led, Designed, Implemented, etc.)
-6. Each bullet: 15-25 words - be specific but do NOT invent details
-7. NO fluff words: avoid "responsible for", "helped with", "worked on"
-8. NO markdown formatting (no **bold**, no *italic*)
+TAILORING RULES (CRITICAL):
+1. Include ALL roles from the profile (do NOT skip any)
+2. For EACH role, choose 3-4 bullets that are MOST RELEVANT to the target job
+3. Emphasize achievements that match the job's required skills and responsibilities
+4. Mirror keywords from the job description in your bullet points (for ATS)
+5. Put the most relevant role first if it's the current role
+
+FORMATTING RULES:
+6. Use EXACT dates from profile - format as "Mon YYYY" (e.g., "Aug 2025")
+7. Convert: "2025-08" → "Aug 2025", "present" → "Present"
+8. Do NOT change, estimate, or round any dates
+9. Start EVERY bullet with a strong ACTION VERB (Built, Led, Designed, Implemented, etc.)
+10. Each bullet: 15-25 words - be specific but do NOT invent details
+11. NO fluff words: avoid "responsible for", "helped with", "worked on"
+12. NO markdown formatting (no **bold**, no *italic*)
 
 WHAT IS ALLOWED vs FABRICATED:
 - ALLOWED: Reordering words - "Led team of 5" -> "Led 5-person team"
@@ -754,7 +760,12 @@ FEEDBACK FROM PREVIOUS ATTEMPT (address these issues):
 
 {job_text}
 {feedback_section}
-CRITICAL REMINDER: The candidate's name is {profile.get('name', 'Unknown')}. Use ONLY the work experience, skills, and education listed above. Do NOT invent any information. Generate the resume now. 400-600 words to fill exactly 1 page.
+CRITICAL REMINDER: The candidate's name is {profile.get('name', 'Unknown')}.
+- Include ALL {len(profile.get('experience', []))} work experience roles from the profile — do NOT skip any
+- Tailor bullet points to emphasize skills and achievements relevant to the TARGET JOB
+- Mirror keywords from the job description for ATS matching
+- Use ONLY facts from the profile. Do NOT invent any information.
+Generate the resume now. 500-700 words to fill exactly 1 page.
 """
     
     logger.info(f"Generating resume for {job.get('title', 'Unknown')} at {job.get('company', 'Unknown')}")
@@ -835,7 +846,7 @@ def _extract_section_data(profile: Dict[str, Any], job: Dict[str, Any]) -> Dict[
     
     # Format experience
     experience_lines = []
-    for exp in profile.get("experience", [])[:6]:
+    for exp in profile.get("experience", []):
         title = exp.get("title", "")
         company = exp.get("company", "")
         start = exp.get("start_date", "")
