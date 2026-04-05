@@ -31,6 +31,10 @@ export default function ProfilesPage() {
     mutationFn: profilesApi.activate,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['profiles'] })
+      showMessage('success', 'Profile set as active')
+    },
+    onError: (err: any) => {
+      showMessage('error', err?.response?.data?.detail || 'Failed to set active profile')
     },
   })
 
