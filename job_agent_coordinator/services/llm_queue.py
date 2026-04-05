@@ -398,20 +398,6 @@ def llm_request(
     """
     queue = get_queue()
 
-    # Prevent deadlock: if this thread owns the event loop that the queue
-    # worker runs on, run_coroutine_threadsafe + future.result() would block forever.
-    try:
-        running_loop = asyncio.get_running_loop()
-        if running_loop is queue._loop:
-            raise RuntimeError(
-                "llm_request() cannot be called from the event loop thread — "
-                "this would deadlock. Use 'await queue.submit(...)' instead."
-            )
-    except RuntimeError as e:
-        if "deadlock" in str(e):
-            raise
-        # No running loop on this thread — safe to proceed
-
     # If the queue worker hasn't started yet (e.g., called outside API context),
     # fall back to a direct Ollama call.
     if queue._loop is None or queue._worker_task is None:
