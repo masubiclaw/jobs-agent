@@ -68,24 +68,121 @@ class ProfileService:
         }) + '\n')
     
     def _load_profile(self, user_id: str, profile_id: str) -> Optional[Dict[str, Any]]:
-        """Load a profile from disk."""
-        profile_file = self._user_profiles_dir(user_id) / f"{profile_id}.toon"
-        if profile_file.exists():
+        """Load a profile from disk (JSON preferred, TOON fallback with migration)."""
+        profiles_dir = self._user_profiles_dir(user_id)
+        json_file = profiles_dir / f"{profile_id}.json"
+        toon_file = profiles_dir / f"{profile_id}.toon"
+
+        # Prefer JSON (reliable for nested data)
+        if json_file.exists():
             try:
-                return from_toon(profile_file.read_text())
+                return json.loads(json_file.read_text())
             except Exception as e:
-                logger.error(f"Failed to load profile {profile_id}: {e}")
+                logger.error(f"Failed to load profile JSON {profile_id}: {e}")
+
+        # Fallback: TOON (migrate to JSON)
+        if toon_file.exists():
+            try:
+                data = from_toon(toon_file.read_text())
+                if data and isinstance(data, dict):
+                    # Check if nested data was parsed properly
+                    if data.get("skills") and isinstance(data["skills"], list) and len(data["skills"]) > 0:
+                        # TOON parsed OK — save as JSON and return
+                        json_file.write_text(json.dumps(data, indent=2, default=str))
+                        logger.info(f"Migrated profile {profile_id} from TOON to JSON")
+                        return data
+                    else:
+                        # TOON parser failed on nested data — parse manually
+                        data = self._parse_profile_toon(toon_file.read_text())
+                        if data:
+                            json_file.write_text(json.dumps(data, indent=2, default=str))
+                            logger.info(f"Migrated profile {profile_id} from TOON (manual parse) to JSON")
+                            return data
+            except Exception as e:
+                logger.error(f"Failed to load profile TOON {profile_id}: {e}")
         return None
-    
+
+    @staticmethod
+    def _parse_profile_toon(text: str) -> Optional[Dict[str, Any]]:
+        """Manually parse a profile TOON file with nested arrays."""
+        import re
+        profile: Dict[str, Any] = {}
+        current_section = None
+        current_item: Optional[Dict[str, Any]] = None
+        current_list: Optional[list] = None
+
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+
+            # Top-level section: [skills], [experience], [preferences], etc.
+            section_match = re.match(r'^\[(\w+)\]$', stripped)
+            if section_match:
+                name = section_match.group(1)
+                if name.isdigit():
+                    # Array item index [0], [1], etc.
+                    if current_item and current_list is not None:
+                        current_list.append(current_item)
+                    current_item = {}
+                else:
+                    # Save previous list
+                    if current_item and current_list is not None:
+                        current_list.append(current_item)
+                        current_item = None
+                    if current_section and current_list is not None:
+                        profile[current_section] = current_list
+
+                    current_section = name
+                    if name in ('skills', 'experience', 'education', 'certifications'):
+                        current_list = []
+                        current_item = None
+                    else:
+                        current_list = None
+                        current_item = None
+                        if name not in profile:
+                            profile[name] = {}
+                continue
+
+            # Key-value pair
+            if ':' in stripped:
+                key, _, value = stripped.partition(':')
+                key = key.strip()
+                value = value.strip()
+
+                # Convert types
+                if value.lower() == 'true':
+                    value = True
+                elif value.lower() == 'false':
+                    value = False
+                elif value.lower() in ('none', 'null', ''):
+                    value = None
+
+                if current_item is not None:
+                    current_item[key] = value
+                elif current_section and isinstance(profile.get(current_section), dict):
+                    profile[current_section][key] = value
+                else:
+                    profile[key] = value
+
+        # Flush last item/section
+        if current_item and current_list is not None:
+            current_list.append(current_item)
+        if current_section and current_list is not None:
+            profile[current_section] = current_list
+
+        return profile if profile.get('id') else None
+
     def _save_profile(self, user_id: str, profile: Dict[str, Any]):
-        """Save a profile to disk."""
+        """Save a profile to disk as JSON."""
         profile_id = profile.get("id")
         if not profile_id:
             return
-        
+
         profile["updated_at"] = datetime.now().isoformat()
-        profile_file = self._user_profiles_dir(user_id) / f"{profile_id}.toon"
-        profile_file.write_text(to_toon(profile) + '\n')
+        profiles_dir = self._user_profiles_dir(user_id)
+        json_file = profiles_dir / f"{profile_id}.json"
+        json_file.write_text(json.dumps(profile, indent=2, default=str))
     
     def _to_response(self, profile: Dict[str, Any], is_active: bool = False) -> ProfileResponse:
         """Convert profile dict to response model."""
@@ -99,8 +196,8 @@ class ProfileService:
                 added_at = None
 
             skills.append(Skill(
-                name=s.get("name", ""),
-                level=s.get("level", "intermediate"),
+                name=str(s.get("name", "") or ""),
+                level=str(s.get("level", "intermediate") or "intermediate"),
                 added_at=added_at
             ))
 
@@ -114,11 +211,11 @@ class ProfileService:
                 added_at = None
 
             experience.append(Experience(
-                title=e.get("title", ""),
-                company=e.get("company", ""),
-                start_date=e.get("start_date", ""),
-                end_date=e.get("end_date", "present"),
-                description=e.get("description", ""),
+                title=str(e.get("title", "") or ""),
+                company=str(e.get("company", "") or ""),
+                start_date=str(e.get("start_date", "") or ""),
+                end_date=str(e.get("end_date", "present") or "present"),
+                description=str(e.get("description", "") or ""),
                 added_at=added_at
             ))
         
@@ -160,26 +257,50 @@ class ProfileService:
         )
     
     def list_profiles(self, user_id: str) -> List[ProfileListItem]:
-        """List all profiles for a user."""
+        """List all profiles for a user (JSON preferred, TOON fallback)."""
         profiles_dir = self._user_profiles_dir(user_id)
         active_id = self._get_active_profile_id(user_id)
-        
+        seen_ids = set()
+
         profiles = []
-        for f in profiles_dir.glob("*.toon"):
-            if f.name == "_meta.toon":
-                continue
+        # Load JSON profiles first
+        for f in profiles_dir.glob("*.json"):
             try:
-                data = from_toon(f.read_text())
+                data = json.loads(f.read_text())
+                pid = data.get("id", f.stem)
+                seen_ids.add(pid)
                 profiles.append(ProfileListItem(
-                    id=data.get("id", f.stem),
+                    id=pid,
                     name=data.get("name", "Unknown"),
                     location=data.get("location", ""),
                     skills_count=len(data.get("skills", [])),
-                    is_active=data.get("id", f.stem) == active_id
+                    is_active=pid == active_id
                 ))
             except Exception as e:
                 logger.warning(f"Failed to load profile {f}: {e}")
-        
+
+        # Then TOON profiles not already loaded as JSON
+        for f in profiles_dir.glob("*.toon"):
+            if f.name == "_meta.toon":
+                continue
+            if f.stem in seen_ids:
+                continue
+            try:
+                # Try loading via _load_profile which handles migration
+                data = self._load_profile(user_id, f.stem)
+                if data:
+                    pid = data.get("id", f.stem)
+                    seen_ids.add(pid)
+                    profiles.append(ProfileListItem(
+                        id=pid,
+                        name=data.get("name", "Unknown"),
+                        location=data.get("location", ""),
+                        skills_count=len(data.get("skills", [])),
+                        is_active=pid == active_id
+                    ))
+            except Exception as e:
+                logger.warning(f"Failed to load profile {f}: {e}")
+
         return profiles
     
     def create_profile(
@@ -361,12 +482,21 @@ class ProfileService:
         return self._to_response(profile, is_active=profile_id == active_id)
     
     def delete_profile(self, profile_id: str, user_id: str) -> bool:
-        """Delete a profile."""
-        profile_file = self._user_profiles_dir(user_id) / f"{profile_id}.toon"
-        if not profile_file.exists():
+        """Delete a profile (handles both JSON and TOON formats)."""
+        profiles_dir = self._user_profiles_dir(user_id)
+        json_file = profiles_dir / f"{profile_id}.json"
+        toon_file = profiles_dir / f"{profile_id}.toon"
+
+        deleted = False
+        if json_file.exists():
+            json_file.unlink()
+            deleted = True
+        if toon_file.exists():
+            toon_file.unlink()
+            deleted = True
+
+        if not deleted:
             return False
-        
-        profile_file.unlink()
         
         # Update active if needed
         if self._get_active_profile_id(user_id) == profile_id:

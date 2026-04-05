@@ -39,9 +39,19 @@ export default function ProfilesPage() {
   })
 
   const deleteMutation = useMutation({
-    mutationFn: profilesApi.delete,
+    mutationFn: (id: string) => {
+      // Prevent deleting the last profile
+      if (profiles && profiles.length <= 1) {
+        return Promise.reject(new Error('Cannot delete the only profile'))
+      }
+      return profilesApi.delete(id)
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['profiles'] })
+      showMessage('success', 'Profile deleted')
+    },
+    onError: (err: any) => {
+      showMessage('error', err?.message || err?.response?.data?.detail || 'Failed to delete profile')
     },
   })
 
