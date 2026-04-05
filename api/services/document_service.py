@@ -196,6 +196,11 @@ class DocumentService:
                 _, final_pages, _ = validate_single_page(pdf_path)
                 page_ok = (final_pages == 1)
 
+            # Add invisible white-text LLM footer (after critique, after page validation)
+            from job_agent_coordinator.tools.pdf_generator import _add_white_text_footer
+            if pdf_path:
+                _add_white_text_footer(pdf_path)
+
             # Build response from critique object
             doc_id = self._generate_doc_id(job_id, profile_response.id, document_type)
 

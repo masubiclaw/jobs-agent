@@ -1065,7 +1065,6 @@ def generate_resume_pdf(
         else:
             logger.warning(f"⚠️ Resume exceeds 1 page: {filepath} ({page_count} pages) - content trimming may be needed")
 
-        _add_white_text_footer(str(filepath))
         return str(filepath)
     except Exception as e:
         logger.error(f"❌ Failed to generate PDF: {e}")
@@ -1215,7 +1214,6 @@ def generate_cover_letter_pdf(
     try:
         doc.build(story)
         logger.info(f"Generated cover letter PDF: {filepath}")
-        _add_white_text_footer(str(filepath))
         return str(filepath)
     except Exception as e:
         logger.error(f"Failed to generate PDF: {e}")
