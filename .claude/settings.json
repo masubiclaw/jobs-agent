@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "agent",
+            "prompt": "Review the git diff of uncommitted and recently committed changes in /Users/masubi/dev/jobs-agent. If there are meaningful feature additions, behavior changes, or new requirements, update /Users/masubi/dev/jobs-agent/docs/spec.md to reflect them. Only update if there are actual spec-worthy changes (new features, changed behavior, new requirements) — do not update for pure bug fixes, refactoring, or test changes. Keep the existing format and add/modify checklist items as needed.",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

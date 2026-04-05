@@ -127,46 +127,7 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {/* Jobs by platform */}
-      {stats?.jobs.by_platform && Object.keys(stats.jobs.by_platform).length > 0 && (
-        <div className="card">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold">Jobs by Platform</h2>
-            <Link
-              to="/admin/jobs"
-              className="text-sm text-primary-600 hover:text-primary-700 flex items-center gap-1"
-            >
-              View all <ArrowRight size={16} />
-            </Link>
-          </div>
-          <div className="space-y-2">
-            {Object.entries(stats.jobs.by_platform).map(([platform, count]) => (
-              <div key={platform} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
-                <span className="capitalize">{platform}</span>
-                <span className="font-medium">{count}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Top companies */}
-      {stats?.jobs.top_companies && stats.jobs.top_companies.length > 0 && (
-        <div className="card">
-          <h2 className="text-lg font-semibold mb-4">Top Companies</h2>
-          <div className="space-y-2">
-            {stats.jobs.top_companies.slice(0, 10).map(([company, count], index) => (
-              <div key={company} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-400 w-6">{index + 1}.</span>
-                  <span>{company}</span>
-                </div>
-                <span className="font-medium">{count} jobs</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* Jobs by platform and top companies removed per user request */}
 
       {/* LLM Queue */}
       <div className="card">
