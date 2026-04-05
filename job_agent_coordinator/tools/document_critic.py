@@ -744,17 +744,51 @@ Job titles held: {', '.join(set(profile_facts['titles']))}
         if invalid_dates:
             logger.warning(f"Invalid dates found: {invalid_dates}")
     
-    # 6. Calculate overall score
+    # 6. Recommendation strength check — would a recruiter strongly recommend this candidate?
+    rec_score = 70  # default
+    rec_feedback = ""
+    job_title = job.get("title", "")
+    job_desc_preview = job.get("description", "")[:2000]
+    if job_desc_preview:
+        rec_prompt = f"""You are a hiring manager reviewing a {doc_type} for the role of "{job_title}".
+
+JOB DESCRIPTION:
+{job_desc_preview}
+
+DOCUMENT:
+{content[:3000]}
+
+Score how strongly you would recommend this candidate for an interview.
+Consider ONLY what is written — do NOT penalize for missing info that may not be relevant.
+Focus on: relevant experience, skill alignment, accomplishment quality, and presentation.
+
+Return ONLY valid JSON:
+{{"recommendation_score": <0-100>, "strengths": ["..."], "gaps": ["..."], "verdict": "strong recommend|recommend|neutral|weak"}}"""
+        try:
+            rec_response = _call_ollama(rec_prompt)
+            json_match = re.search(r'\{[\s\S]*?\}', rec_response)
+            if json_match:
+                rec_data = json.loads(json_match.group())
+                rec_score = rec_data.get("recommendation_score", 70)
+                rec_feedback = rec_data.get("verdict", "")
+                if rec_data.get("gaps"):
+                    logger.info(f"Recommendation gaps: {rec_data['gaps'][:3]}")
+        except Exception as e:
+            logger.warning(f"Recommendation check failed: {e}")
+
+    # 7. Calculate overall score
     fact_score = fact_data.get("fact_score", 50)
     ats_score = ats_data.get("ats_score", 70)
-    
+
     # If fabricated facts found, set fact_score to 0
     if fact_data.get("fabricated_facts"):
         fact_score = 0
-    
-    # Weighted average (facts are critical, grammar is important)
-    # facts: 35%, keywords: 25%, ats: 20%, grammar: 20%
-    overall_score = int(fact_score * 0.35 + keyword_score * 0.25 + ats_score * 0.20 + grammar_score * 0.20)
+
+    # Weighted average: facts 30%, keywords 20%, ats 15%, grammar 15%, recommendation 20%
+    overall_score = int(
+        fact_score * 0.30 + keyword_score * 0.20 + ats_score * 0.15
+        + grammar_score * 0.15 + rec_score * 0.20
+    )
     
     # 7. Compile suggestions
     suggestions = ats_data.get("suggestions", [])
