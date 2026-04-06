@@ -496,7 +496,7 @@ FACTUAL ACCURACY RULES (CRITICAL - violations cause failure):
 
 TAILORING RULES (CRITICAL):
 1. Include the 4-5 MOST RELEVANT roles from the profile — skip older or less relevant roles to fit 1 page
-2. For EACH included role, choose 2-3 bullets that are MOST RELEVANT to the target job
+2. For EACH included role, choose 3-4 bullets that are MOST RELEVANT to the target job
 3. Emphasize achievements that match the job's required skills and responsibilities
 4. Mirror keywords from the job description in your bullet points (for ATS)
 5. Put the most relevant role first if it's the current role
@@ -606,10 +606,10 @@ STRICT RULES - DATES (CRITICAL):
 10. If a date is missing, omit that role entirely rather than guess
 
 STRICT RULES - LENGTH (CRITICAL):
-11. Resume MUST be 350-450 words to fit exactly 1 page — SHORTER is better than overflowing
+11. Resume MUST be 450-550 words to FILL exactly 1 page — use the full page, do not leave blank space
 12. Include 4-5 most relevant roles with achievement bullets
-13. Each role needs 2-3 bullet points (NOT more) with specific accomplishments
-14. Skills section: 10-15 relevant skills
+13. Each role needs 3-4 bullet points with specific accomplishments and metrics
+14. Skills section: 12-15 relevant skills
 
 STRICT RULES - BULLET POINT FORMAT (CRITICAL):
 15. EVERY achievement under each job MUST start with "- " (dash followed by space)
@@ -765,7 +765,7 @@ CRITICAL REMINDER: The candidate's name is {profile.get('name', 'Unknown')}.
 - 2-3 bullet points per role, tailored to the TARGET JOB
 - Mirror keywords from the job description for ATS matching
 - Use ONLY facts from the profile. Do NOT invent any information.
-Generate the resume now. 350-450 words MAXIMUM to fit exactly 1 page.
+Generate the resume now. 450-550 words to FILL exactly 1 page. Use the full page — do not leave blank space.
 """
     
     logger.info(f"Generating resume for {job.get('title', 'Unknown')} at {job.get('company', 'Unknown')}")
