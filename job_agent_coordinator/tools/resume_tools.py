@@ -344,14 +344,14 @@ def generate_resume(job_id: str, profile_id: str = "") -> str:
             else:
                 logger.warning(f"Resume has {page_count} pages (attempt {page_attempt + 1}), regenerating...")
                 page_feedback = (
-                    f"CRITICAL: The generated resume is {page_count} pages but MUST be exactly 1 page. "
-                    f"REDUCE content significantly:\n"
-                    f"- Use shorter bullet points (max 15-20 words each)\n"
-                    f"- Keep only 2-3 bullet points per job\n"
-                    f"- Remove less impactful achievements\n"
-                    f"- Use concise language, avoid redundancy\n"
-                    f"- Limit skills to 10-12 most relevant\n"
-                    f"- Keep summary to 2 sentences maximum"
+                    f"CRITICAL: The generated resume is {page_count} pages but MUST be EXACTLY 1 page. "
+                    f"You MUST cut content aggressively:\n"
+                    f"- Include ONLY 3-4 most relevant roles, DROP the rest entirely\n"
+                    f"- MAXIMUM 2 bullet points per role (10-15 words each)\n"
+                    f"- Skills: maximum 10, comma-separated on one line\n"
+                    f"- Summary: 1-2 sentences only\n"
+                    f"- Total resume: 300-400 words MAXIMUM\n"
+                    f"- If still too long, drop the oldest/least relevant role"
                 )
         
         # Format response
