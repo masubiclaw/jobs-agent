@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import threading
 import time
 import hashlib
 from collections import deque
@@ -64,12 +65,15 @@ class PipelineService:
         self._scheduler_task: Optional[asyncio.Task] = None
 
         # Job-level observability queues
-        self._doc_queue: List[Dict[str, Any]] = []         # docs waiting to be generated
-        self._current_doc: Optional[Dict[str, Any]] = None  # currently generating
+        self._doc_queue: List[Dict[str, Any]] = []         # pipeline docs waiting to be generated
+        self._current_doc: Optional[Dict[str, Any]] = None  # pipeline currently generating
         self._last_doc_duration: float = 0.0
         self._avg_doc_duration: float = 0.0
         self._match_queue: List[Dict[str, Any]] = []        # jobs waiting for LLM match
         self._current_match: Optional[Dict[str, Any]] = None
+        # On-demand doc generation (from UI, not pipeline)
+        self._ondemand_docs: List[Dict[str, Any]] = []      # currently running on-demand requests
+        self._ondemand_lock = threading.Lock()
 
         self._log_buffer: deque = deque(maxlen=1000)
         self._log_handler = PipelineLogHandler(self._log_buffer)
@@ -99,6 +103,27 @@ class PipelineService:
             "message": message,
         })
 
+    # ── On-demand doc gen tracking (called from document_service.py) ──
+
+    def track_ondemand_start(self, job_id: str, title: str, company: str, doc_type: str = "resume") -> str:
+        """Register an on-demand doc generation request. Returns a tracking key."""
+        key = f"{job_id}:{doc_type}:{time.time()}"
+        with self._ondemand_lock:
+            self._ondemand_docs.append({
+                "key": key,
+                "job_id": job_id,
+                "title": title,
+                "company": company,
+                "doc_type": doc_type,
+                "started_at": time.time(),
+            })
+        return key
+
+    def track_ondemand_complete(self, key: str):
+        """Mark an on-demand doc generation request as done."""
+        with self._ondemand_lock:
+            self._ondemand_docs = [d for d in self._ondemand_docs if d.get("key") != key]
+
     def get_status(self) -> dict:
         now = time.time()
         current_doc = None
@@ -117,6 +142,17 @@ class PipelineService:
                 "company": self._current_match.get("company"),
                 "elapsed_seconds": round(now - self._current_match.get("started_at", now), 1),
             }
+        with self._ondemand_lock:
+            ondemand = [
+                {
+                    "job_id": d.get("job_id"),
+                    "title": d.get("title"),
+                    "company": d.get("company"),
+                    "doc_type": d.get("doc_type"),
+                    "elapsed_seconds": round(now - d.get("started_at", now), 1),
+                }
+                for d in self._ondemand_docs
+            ]
         return {
             "scheduler_enabled": self._scheduler_enabled,
             "interval_hours": self._interval_hours,
@@ -141,6 +177,10 @@ class PipelineService:
                     {"title": d.get("title", "")[:50], "company": d.get("company", "")}
                     for d in self._match_queue[:10]
                 ],
+            },
+            "ondemand_docs": {
+                "count": len(ondemand),
+                "items": ondemand,
             },
         }
 

@@ -110,6 +110,14 @@ export interface PipelineCurrentItem {
   elapsed_seconds: number
 }
 
+export interface OndemandDocItem {
+  job_id: string
+  title: string
+  company: string
+  doc_type: string
+  elapsed_seconds: number
+}
+
 export interface PipelineStatus {
   scheduler_enabled: boolean
   interval_hours: number
@@ -128,6 +136,10 @@ export interface PipelineStatus {
     pending: number
     current: PipelineCurrentItem | null
     upcoming: PipelineQueueItem[]
+  }
+  ondemand_docs?: {
+    count: number
+    items: OndemandDocItem[]
   }
 }
 

@@ -109,6 +109,7 @@ class DocumentService:
         bypassing the TOON-returning wrapper functions in resume_tools.py
         which depend on the old single-user ProfileStore.
         """
+        tracking_key: Optional[str] = None
         try:
             # Get profile
             if profile_id:
@@ -133,6 +134,19 @@ class DocumentService:
             company = job_dict.get("company", "Unknown")
             candidate_name = profile_dict.get("name", "Candidate")
             pdf_path = None
+
+            # Register this on-demand request for observability
+            try:
+                from api.services.pipeline_service import get_pipeline_service
+                tracking_key = get_pipeline_service().track_ondemand_start(
+                    job_id=job_id,
+                    title=job_response.title,
+                    company=company,
+                    doc_type=document_type.value,
+                )
+            except Exception as e:
+                logger.debug(f"Could not track ondemand: {e}")
+                tracking_key = None
 
             if document_type == DocumentType.RESUME:
                 # Section-based generation with critique loop
@@ -245,7 +259,14 @@ class DocumentService:
         except Exception as e:
             logger.error(f"Document generation error: {e}", exc_info=True)
             return None
-    
+        finally:
+            if tracking_key:
+                try:
+                    from api.services.pipeline_service import get_pipeline_service
+                    get_pipeline_service().track_ondemand_complete(tracking_key)
+                except Exception:
+                    pass
+
     def generate_package(
         self,
         user_id: str,

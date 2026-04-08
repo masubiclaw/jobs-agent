@@ -323,3 +323,51 @@ class TestPipelineStatus:
         assert cur is not None
         assert cur["title"] == "ML Engineer"
         assert 9 <= cur["elapsed_seconds"] <= 12
+
+
+class TestOndemandDocTracking:
+    @pytest.fixture
+    def service(self):
+        svc = PipelineService()
+        svc._ondemand_docs = []
+        return svc
+
+    def test_track_start_registers_item(self, service):
+        key = service.track_ondemand_start(
+            job_id="job123", title="Senior Engineer", company="Acme", doc_type="resume"
+        )
+        assert key  # Non-empty key returned
+        status = service.get_status()
+        assert status["ondemand_docs"]["count"] == 1
+        item = status["ondemand_docs"]["items"][0]
+        assert item["job_id"] == "job123"
+        assert item["title"] == "Senior Engineer"
+        assert item["company"] == "Acme"
+        assert item["doc_type"] == "resume"
+        assert item["elapsed_seconds"] >= 0
+
+    def test_track_complete_removes_item(self, service):
+        key = service.track_ondemand_start(
+            job_id="job456", title="Staff Engineer", company="Oura", doc_type="cover_letter"
+        )
+        assert service.get_status()["ondemand_docs"]["count"] == 1
+        service.track_ondemand_complete(key)
+        assert service.get_status()["ondemand_docs"]["count"] == 0
+
+    def test_multiple_concurrent_ondemand(self, service):
+        k1 = service.track_ondemand_start("j1", "Role 1", "Co1", "resume")
+        k2 = service.track_ondemand_start("j2", "Role 2", "Co2", "resume")
+        k3 = service.track_ondemand_start("j3", "Role 3", "Co3", "cover_letter")
+        assert service.get_status()["ondemand_docs"]["count"] == 3
+        # Complete the middle one
+        service.track_ondemand_complete(k2)
+        status = service.get_status()
+        assert status["ondemand_docs"]["count"] == 2
+        remaining_job_ids = {i["job_id"] for i in status["ondemand_docs"]["items"]}
+        assert remaining_job_ids == {"j1", "j3"}
+
+    def test_complete_unknown_key_is_noop(self, service):
+        service.track_ondemand_start("j1", "R", "C", "resume")
+        # Completing a nonexistent key shouldn't raise or affect other items
+        service.track_ondemand_complete("nonexistent-key")
+        assert service.get_status()["ondemand_docs"]["count"] == 1

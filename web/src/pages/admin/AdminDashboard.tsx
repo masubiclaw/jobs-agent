@@ -136,7 +136,7 @@ export default function AdminDashboard() {
       {/* Jobs by platform and top companies removed per user request */}
 
       {/* Pipeline Job Queues */}
-      {pipelineStatus && (pipelineStatus.doc_queue || pipelineStatus.match_queue) && (
+      {pipelineStatus && (pipelineStatus.doc_queue || pipelineStatus.match_queue || pipelineStatus.ondemand_docs) && (
         <div className="card">
           <div className="flex items-center gap-2 mb-4">
             <RefreshCw size={20} className="text-blue-600" />
@@ -146,7 +146,33 @@ export default function AdminDashboard() {
                 {pipelineStatus.current_step || 'running'}
               </span>
             )}
+            {(pipelineStatus.ondemand_docs?.count ?? 0) > 0 && (
+              <span className="ml-2 px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-xs font-medium animate-pulse">
+                {pipelineStatus.ondemand_docs!.count} on-demand
+              </span>
+            )}
           </div>
+
+          {/* On-demand doc generation requests */}
+          {(pipelineStatus.ondemand_docs?.count ?? 0) > 0 && (
+            <div className="border border-purple-200 bg-purple-50 rounded-lg p-4 mb-4">
+              <h3 className="font-medium mb-2 text-purple-900">
+                On-demand Document Generation ({pipelineStatus.ondemand_docs!.count})
+              </h3>
+              <div className="space-y-2">
+                {pipelineStatus.ondemand_docs!.items.map((item, i) => (
+                  <div key={i} className="flex items-center justify-between bg-white rounded px-3 py-2 text-sm">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium truncate">{item.title}</div>
+                      <div className="text-xs text-gray-500">
+                        {item.company} · {item.doc_type} · {Math.round(item.elapsed_seconds)}s elapsed
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Document Generation Queue */}
