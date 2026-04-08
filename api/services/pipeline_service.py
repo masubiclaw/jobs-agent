@@ -623,7 +623,8 @@ class PipelineService:
             # Filter out already-generated jobs
             pending_list = [m for m in matches if m.get("job_id", "") not in recent_job_ids]
             skipped = len(matches) - len(pending_list)
-            self._add_log("INFO", f"Generate step: {len(matches)} matches >= 70%, {skipped} skipped (within 24h), {len(pending_list)} to generate")
+            total_to_generate = len(pending_list)
+            self._add_log("INFO", f"Generate step: {len(matches)} matches >= 70%, {skipped} skipped (within 24h), {total_to_generate} to generate")
 
             # Pre-queue all pending doc gen jobs for observability
             self._doc_queue = [
@@ -635,6 +636,14 @@ class PipelineService:
                 }
                 for m in pending_list
             ]
+
+            # Start step-level timer and reset stats for this run
+            self._doc_step_started_at = time.time()
+            self._doc_step_completed = 0
+            self._doc_step_total = total_to_generate
+            self._doc_step_elapsed = 0.0
+            self._last_doc_duration = 0.0
+            self._avg_doc_duration = 0.0
 
             # Rolling window of recent document durations for avg calculation
             recent_durations: List[float] = []
@@ -661,11 +670,26 @@ class PipelineService:
                         recent_durations.pop(0)
                     self._last_doc_duration = duration
                     self._avg_doc_duration = sum(recent_durations) / len(recent_durations)
-                    self._add_log("INFO", f"Doc done: {job_info['title'][:40]} in {duration:.0f}s (avg {self._avg_doc_duration:.0f}s)")
+                    self._doc_step_completed += 1
+                    self._doc_step_elapsed = time.time() - self._doc_step_started_at
+                    self._add_log(
+                        "INFO",
+                        f"Doc {self._doc_step_completed}/{total_to_generate} done: {job_info['title'][:40]} in {duration:.0f}s (step elapsed {self._doc_step_elapsed:.0f}s)",
+                    )
                     if self._doc_queue and self._doc_queue[0]["job_id"] == job_id:
                         self._doc_queue.pop(0)
                     self._current_doc = None
 
+            # Finalize step total time and log summary
+            total_time = time.time() - self._doc_step_started_at
+            self._doc_step_elapsed = total_time
+            mins = int(total_time // 60)
+            secs = int(total_time % 60)
+            avg = total_time / total_to_generate if total_to_generate > 0 else 0
+            self._add_log(
+                "INFO",
+                f"Generate step complete: {generated}/{total_to_generate} docs in {mins}m{secs}s (avg {avg:.0f}s/doc)",
+            )
             return generated
         except Exception as e:
             self._add_log("ERROR", f"Generate error: {e}")
