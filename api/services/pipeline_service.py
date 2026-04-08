@@ -63,6 +63,14 @@ class PipelineService:
         self._next_run: Optional[datetime] = None
         self._scheduler_task: Optional[asyncio.Task] = None
 
+        # Job-level observability queues
+        self._doc_queue: List[Dict[str, Any]] = []         # docs waiting to be generated
+        self._current_doc: Optional[Dict[str, Any]] = None  # currently generating
+        self._last_doc_duration: float = 0.0
+        self._avg_doc_duration: float = 0.0
+        self._match_queue: List[Dict[str, Any]] = []        # jobs waiting for LLM match
+        self._current_match: Optional[Dict[str, Any]] = None
+
         self._log_buffer: deque = deque(maxlen=1000)
         self._log_handler = PipelineLogHandler(self._log_buffer)
         self._log_handler.setFormatter(logging.Formatter("%(message)s"))
@@ -92,6 +100,23 @@ class PipelineService:
         })
 
     def get_status(self) -> dict:
+        now = time.time()
+        current_doc = None
+        if self._current_doc:
+            current_doc = {
+                "job_id": self._current_doc.get("job_id"),
+                "title": self._current_doc.get("title"),
+                "company": self._current_doc.get("company"),
+                "elapsed_seconds": round(now - self._current_doc.get("started_at", now), 1),
+            }
+        current_match = None
+        if self._current_match:
+            current_match = {
+                "job_id": self._current_match.get("job_id"),
+                "title": self._current_match.get("title"),
+                "company": self._current_match.get("company"),
+                "elapsed_seconds": round(now - self._current_match.get("started_at", now), 1),
+            }
         return {
             "scheduler_enabled": self._scheduler_enabled,
             "interval_hours": self._interval_hours,
@@ -99,6 +124,24 @@ class PipelineService:
             "last_run": self._last_run.isoformat() if self._last_run else None,
             "next_run": self._next_run.isoformat() if self._next_run else None,
             "current_step": self._current_step,
+            "doc_queue": {
+                "pending": len(self._doc_queue),
+                "current": current_doc,
+                "last_duration_seconds": round(self._last_doc_duration, 1),
+                "avg_duration_seconds": round(self._avg_doc_duration, 1),
+                "upcoming": [
+                    {"title": d.get("title", "")[:50], "company": d.get("company", ""), "score": d.get("score", 0)}
+                    for d in self._doc_queue[:10]
+                ],
+            },
+            "match_queue": {
+                "pending": len(self._match_queue),
+                "current": current_match,
+                "upcoming": [
+                    {"title": d.get("title", "")[:50], "company": d.get("company", "")}
+                    for d in self._match_queue[:10]
+                ],
+            },
         }
 
     def get_history(self, limit: int = 20) -> List[dict]:
@@ -466,14 +509,17 @@ class PipelineService:
             return ex.submit(fetch_page_with_playwright, url).result(timeout=45)
 
     async def _run_match_step(self, cache) -> int:
-        """Run job matching. Returns number of good matches."""
+        """Run two-pass job matching with queue tracking for observability."""
         try:
             from job_agent_coordinator.sub_agents.job_matcher.agent import analyze_job_match
 
             jobs = cache.list_all(limit=500)
             good_matches = 0
 
-            for job in jobs:
+            # Pass 1: fast keyword matching (no LLM)
+            self._add_log("INFO", f"Match Pass 1: keyword scoring {len(jobs)} jobs")
+            llm_candidates = []
+            for i, job in enumerate(jobs):
                 try:
                     result = await asyncio.to_thread(
                         analyze_job_match,
@@ -487,11 +533,61 @@ class PipelineService:
                         use_cache=True,
                         run_llm=False,
                     )
+                    score = result.get("combined_score", result.get("match_score", 0))
+                    level = result.get("match_level", "weak")
+                    if level in ("strong", "good"):
+                        good_matches += 1
+                    # Queue for LLM pass if score >= 40 and no LLM score yet
+                    if score >= 40 and result.get("llm_score") is None:
+                        llm_candidates.append(job)
+                    if (i + 1) % 100 == 0:
+                        self._add_log("INFO", f"  Pass 1: {i + 1}/{len(jobs)}")
+                except Exception as e:
+                    logger.debug(f"Match failed for job {job.get('id', '?')}: {e}")
+
+            # Pass 2: LLM matching on candidates — pre-queue for observability
+            self._match_queue = [
+                {
+                    "job_id": j.get("id", ""),
+                    "title": j.get("title", "Unknown"),
+                    "company": j.get("company", "Unknown"),
+                }
+                for j in llm_candidates
+            ]
+            self._add_log("INFO", f"Match Pass 2: LLM analysis on {len(self._match_queue)} candidates")
+
+            while self._match_queue:
+                job_info = self._match_queue[0]
+                job_id = job_info["job_id"]
+                self._current_match = {**job_info, "started_at": time.time()}
+                # Find the full job dict
+                job = next((j for j in llm_candidates if j.get("id") == job_id), None)
+                if not job:
+                    self._match_queue.pop(0)
+                    self._current_match = None
+                    continue
+                try:
+                    result = await asyncio.to_thread(
+                        analyze_job_match,
+                        job_title=job["title"],
+                        company=job["company"],
+                        job_description=job.get("description", ""),
+                        location=job.get("location", ""),
+                        salary_info=str(job.get("salary", "")),
+                        job_url=job.get("url", ""),
+                        job_id=job.get("id", ""),
+                        use_cache=True,
+                        run_llm=True,
+                    )
                     level = result.get("match_level", "weak")
                     if level in ("strong", "good"):
                         good_matches += 1
                 except Exception as e:
-                    logger.debug(f"Match failed for job {job.get('id', '?')}: {e}")
+                    logger.debug(f"LLM match failed: {e}")
+                finally:
+                    if self._match_queue and self._match_queue[0]["job_id"] == job_id:
+                        self._match_queue.pop(0)
+                    self._current_match = None
 
             return good_matches
         except Exception as e:
@@ -524,15 +620,30 @@ class PipelineService:
                 except Exception as e:
                     self._add_log("DEBUG", f"Could not check existing docs: {e}")
 
-            self._add_log("INFO", f"Generate step: {len(matches)} matches >= 70%, {len(recent_job_ids)} already generated in 24h")
-            for match in matches:
-                job_id = match.get("job_id", "")
+            # Filter out already-generated jobs
+            pending_list = [m for m in matches if m.get("job_id", "") not in recent_job_ids]
+            skipped = len(matches) - len(pending_list)
+            self._add_log("INFO", f"Generate step: {len(matches)} matches >= 70%, {skipped} skipped (within 24h), {len(pending_list)} to generate")
 
-                # Skip if docs were generated for this job in the last 24h
-                if job_id in recent_job_ids:
-                    self._add_log("INFO", f"Skipping {job_id} — docs generated within 24h")
-                    continue
+            # Pre-queue all pending doc gen jobs for observability
+            self._doc_queue = [
+                {
+                    "job_id": m.get("job_id", ""),
+                    "title": (cache.get(m.get("job_id", "")) or {}).get("title", "Unknown"),
+                    "company": (cache.get(m.get("job_id", "")) or {}).get("company", "Unknown"),
+                    "score": m.get("combined_score", m.get("match_score", 0)),
+                }
+                for m in pending_list
+            ]
 
+            # Rolling window of recent document durations for avg calculation
+            recent_durations: List[float] = []
+
+            while self._doc_queue:
+                job_info = self._doc_queue[0]
+                job_id = job_info["job_id"]
+                started_at = time.time()
+                self._current_doc = {**job_info, "started_at": started_at}
                 try:
                     result = await asyncio.to_thread(
                         generate_application_package, job_id, ""
@@ -540,9 +651,20 @@ class PipelineService:
                     if result and "[error]" not in str(result).lower():
                         generated += 1
                     else:
-                        self._add_log("WARN", f"Generate returned error for job {job_id}")
+                        self._add_log("WARN", f"Generate returned error for {job_info['title'][:30]}")
                 except Exception as e:
-                    self._add_log("WARN", f"Generate failed for job {job_id}: {e}")
+                    self._add_log("WARN", f"Generate failed for {job_info['title'][:30]}: {e}")
+                finally:
+                    duration = time.time() - started_at
+                    recent_durations.append(duration)
+                    if len(recent_durations) > 10:
+                        recent_durations.pop(0)
+                    self._last_doc_duration = duration
+                    self._avg_doc_duration = sum(recent_durations) / len(recent_durations)
+                    self._add_log("INFO", f"Doc done: {job_info['title'][:40]} in {duration:.0f}s (avg {self._avg_doc_duration:.0f}s)")
+                    if self._doc_queue and self._doc_queue[0]["job_id"] == job_id:
+                        self._doc_queue.pop(0)
+                    self._current_doc = None
 
             return generated
         except Exception as e:

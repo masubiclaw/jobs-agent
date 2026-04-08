@@ -97,6 +97,19 @@ export const adminApi = {
 }
 
 // Pipeline types
+export interface PipelineQueueItem {
+  title: string
+  company: string
+  score?: number
+}
+
+export interface PipelineCurrentItem {
+  job_id: string
+  title: string
+  company: string
+  elapsed_seconds: number
+}
+
 export interface PipelineStatus {
   scheduler_enabled: boolean
   interval_hours: number
@@ -104,6 +117,18 @@ export interface PipelineStatus {
   last_run: string | null
   next_run: string | null
   current_step: string | null
+  doc_queue?: {
+    pending: number
+    current: PipelineCurrentItem | null
+    last_duration_seconds: number
+    avg_duration_seconds: number
+    upcoming: PipelineQueueItem[]
+  }
+  match_queue?: {
+    pending: number
+    current: PipelineCurrentItem | null
+    upcoming: PipelineQueueItem[]
+  }
 }
 
 export interface PipelineRunHistory {

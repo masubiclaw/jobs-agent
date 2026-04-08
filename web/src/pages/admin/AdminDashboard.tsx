@@ -24,6 +24,12 @@ export default function AdminDashboard() {
     refetchInterval: 5000,
   })
 
+  const { data: pipelineStatus } = useQuery({
+    queryKey: ['pipeline-status'],
+    queryFn: adminApi.getPipelineStatus,
+    refetchInterval: 5000,
+  })
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -128,6 +134,94 @@ export default function AdminDashboard() {
       </div>
 
       {/* Jobs by platform and top companies removed per user request */}
+
+      {/* Pipeline Job Queues */}
+      {pipelineStatus && (pipelineStatus.doc_queue || pipelineStatus.match_queue) && (
+        <div className="card">
+          <div className="flex items-center gap-2 mb-4">
+            <RefreshCw size={20} className="text-blue-600" />
+            <h2 className="text-lg font-semibold">Pipeline Jobs</h2>
+            {pipelineStatus.is_running && (
+              <span className="ml-2 px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-xs font-medium animate-pulse">
+                {pipelineStatus.current_step || 'running'}
+              </span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Document Generation Queue */}
+            <div className="border border-gray-200 rounded-lg p-4">
+              <h3 className="font-medium mb-2 flex items-center justify-between">
+                <span>Document Generation</span>
+                <span className="text-sm text-gray-500">
+                  {pipelineStatus.doc_queue?.pending ?? 0} pending
+                </span>
+              </h3>
+              {pipelineStatus.doc_queue?.avg_duration_seconds ? (
+                <p className="text-xs text-gray-500 mb-2">
+                  Avg: {Math.round(pipelineStatus.doc_queue.avg_duration_seconds)}s per doc
+                  {pipelineStatus.doc_queue.last_duration_seconds > 0 && (
+                    <span> · Last: {Math.round(pipelineStatus.doc_queue.last_duration_seconds)}s</span>
+                  )}
+                </p>
+              ) : null}
+              {pipelineStatus.doc_queue?.current && (
+                <div className="bg-blue-50 border border-blue-200 rounded px-3 py-2 text-sm mb-2">
+                  <div className="font-medium text-blue-900 truncate">
+                    {pipelineStatus.doc_queue.current.title}
+                  </div>
+                  <div className="text-xs text-blue-700">
+                    {pipelineStatus.doc_queue.current.company} · {Math.round(pipelineStatus.doc_queue.current.elapsed_seconds)}s elapsed
+                  </div>
+                </div>
+              )}
+              {pipelineStatus.doc_queue?.upcoming && pipelineStatus.doc_queue.upcoming.length > 0 && (
+                <div className="space-y-1">
+                  <div className="text-xs text-gray-500 mb-1">Next up:</div>
+                  {pipelineStatus.doc_queue.upcoming.slice(1, 6).map((item, i) => (
+                    <div key={i} className="text-xs text-gray-700 truncate">
+                      {i + 2}. {item.title} <span className="text-gray-400">@ {item.company}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Match Queue */}
+            <div className="border border-gray-200 rounded-lg p-4">
+              <h3 className="font-medium mb-2 flex items-center justify-between">
+                <span>LLM Matching</span>
+                <span className="text-sm text-gray-500">
+                  {pipelineStatus.match_queue?.pending ?? 0} pending
+                </span>
+              </h3>
+              {pipelineStatus.match_queue?.current && (
+                <div className="bg-blue-50 border border-blue-200 rounded px-3 py-2 text-sm mb-2">
+                  <div className="font-medium text-blue-900 truncate">
+                    {pipelineStatus.match_queue.current.title}
+                  </div>
+                  <div className="text-xs text-blue-700">
+                    {pipelineStatus.match_queue.current.company} · {Math.round(pipelineStatus.match_queue.current.elapsed_seconds)}s elapsed
+                  </div>
+                </div>
+              )}
+              {pipelineStatus.match_queue?.upcoming && pipelineStatus.match_queue.upcoming.length > 0 && (
+                <div className="space-y-1">
+                  <div className="text-xs text-gray-500 mb-1">Next up:</div>
+                  {pipelineStatus.match_queue.upcoming.slice(1, 6).map((item, i) => (
+                    <div key={i} className="text-xs text-gray-700 truncate">
+                      {i + 2}. {item.title} <span className="text-gray-400">@ {item.company}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {(!pipelineStatus.match_queue?.pending || pipelineStatus.match_queue.pending === 0) && (
+                <p className="text-sm text-gray-400">No jobs waiting for LLM matching</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* LLM Queue */}
       <div className="card">
