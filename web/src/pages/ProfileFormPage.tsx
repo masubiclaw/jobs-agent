@@ -114,21 +114,37 @@ export default function ProfileFormPage() {
       excluded_companies: splitCsv(rawExcludedCompanies),
     }
 
+    // Auto-commit pending skill/experience if user filled them but didn't click Add
+    let finalSkills = skills
+    if (newSkill.name.trim()) {
+      finalSkills = [...skills, { ...newSkill, added_at: new Date().toISOString() }]
+    }
+    let finalExperience = experience
+    if (newExp.title.trim() && newExp.company.trim()) {
+      if (editingExpIndex !== null) {
+        finalExperience = experience.map((exp, i) =>
+          i === editingExpIndex ? { ...newExp, added_at: exp.added_at } : exp
+        )
+      } else {
+        finalExperience = [...experience, { ...newExp, added_at: new Date().toISOString() }]
+      }
+    }
+
     if (isEditing) {
       updateMutation.mutate({
         id: id!,
         data: {
           ...formData,
-          skills,
-          experience,
+          skills: finalSkills,
+          experience: finalExperience,
           preferences: finalPreferences,
         },
       })
     } else {
       createMutation.mutate({
         ...formData,
-        skills,
-        experience,
+        skills: finalSkills,
+        experience: finalExperience,
         preferences: finalPreferences,
       })
     }
@@ -136,7 +152,7 @@ export default function ProfileFormPage() {
 
   const addSkill = () => {
     if (newSkill.name.trim()) {
-      setSkills([...skills, { ...newSkill, added_at: new Date().toISOString() }])
+      setSkills(prev => [...prev, { ...newSkill, added_at: new Date().toISOString() }])
       setNewSkill({ name: '', level: 'intermediate' })
     }
   }
@@ -146,19 +162,23 @@ export default function ProfileFormPage() {
   }
 
   const addExperience = () => {
-    if (newExp.title.trim() && newExp.company.trim()) {
-      if (editingExpIndex !== null) {
-        // Update existing entry
-        setExperience(experience.map((exp, i) =>
-          i === editingExpIndex ? { ...newExp, added_at: exp.added_at } : exp
-        ))
-        setEditingExpIndex(null)
-      } else {
-        // Append new entry
-        setExperience([...experience, { ...newExp, added_at: new Date().toISOString() }])
-      }
-      setNewExp({ title: '', company: '', start_date: '', end_date: '', description: '' })
+    console.log('[addExperience]', { newExp, editingExpIndex, currentLen: experience.length })
+    if (!newExp.title.trim() || !newExp.company.trim()) {
+      showSaveMessage('error', 'Title and company are required to add experience')
+      return
     }
+    if (editingExpIndex !== null) {
+      // Update existing entry
+      setExperience(prev => prev.map((exp, i) =>
+        i === editingExpIndex ? { ...newExp, added_at: exp.added_at } : exp
+      ))
+      setEditingExpIndex(null)
+    } else {
+      // Append new entry
+      setExperience(prev => [...prev, { ...newExp, added_at: new Date().toISOString() }])
+    }
+    setNewExp({ title: '', company: '', start_date: '', end_date: '', description: '' })
+    showSaveMessage('success', 'Experience added — click Save Profile to persist')
   }
 
   const startEditExperience = (index: number) => {

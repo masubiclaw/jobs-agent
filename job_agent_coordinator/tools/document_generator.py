@@ -495,11 +495,16 @@ FACTUAL ACCURACY RULES (CRITICAL - violations cause failure):
 6. Do NOT add percentages, dollar amounts, or team sizes unless explicitly stated
 
 TAILORING RULES (CRITICAL):
-1. Include the 4-5 MOST RELEVANT roles from the profile — skip older or less relevant roles to fit 1 page
-2. For EACH included role, choose 3-4 bullets that are MOST RELEVANT to the target job
-3. Emphasize achievements that match the job's required skills and responsibilities
-4. Mirror keywords from the job description in your bullet points (for ATS)
-5. Put the most relevant role first if it's the current role
+1. RELEVANCE-BASED SELECTION — do NOT just pick the most recent roles. Instead:
+   a. Analyze the TARGET JOB's required skills, responsibilities, and domain
+   b. Score each profile role by how well it demonstrates those requirements
+   c. Select the 4-5 HIGHEST-SCORING roles, regardless of recency
+   d. Example: if the job is ML Engineer and the profile has 3 backend roles + 2 ML roles, prioritize the ML roles even if they are older
+2. PRESERVE chronological order within the selected roles (most recent first)
+3. For EACH selected role, choose 3-4 bullets that DIRECTLY demonstrate the target job's requirements
+4. Mirror EXACT keywords and phrases from the job description in your bullet points (for ATS)
+5. The CURRENT role should always be included (recency signal for recruiters)
+6. Roles that share NO skills or domain with the target job can be excluded entirely
 
 FORMATTING RULES:
 6. Use EXACT dates from profile - format as "Mon YYYY" (e.g., "Aug 2025")
@@ -606,10 +611,10 @@ STRICT RULES - DATES (CRITICAL):
 10. If a date is missing, omit that role entirely rather than guess
 
 STRICT RULES - LENGTH (CRITICAL):
-11. Resume MUST be 450-550 words to FILL exactly 1 page — use the full page, do not leave blank space
-12. Include 4-5 most relevant roles with achievement bullets
+11. Resume MUST be 500-600 words to FILL exactly 1 page — use the full page, do not leave blank space
+12. Include 4-5 most RELEVANT (not just recent) roles, selected by match to target job
 13. Each role needs 3-4 bullet points with specific accomplishments and metrics
-14. Skills section: 12-15 relevant skills
+14. Skills section: 12-16 relevant skills
 
 STRICT RULES - BULLET POINT FORMAT (CRITICAL):
 15. EVERY achievement under each job MUST start with "- " (dash followed by space)
@@ -761,11 +766,24 @@ FEEDBACK FROM PREVIOUS ATTEMPT (address these issues):
 {job_text}
 {feedback_section}
 CRITICAL REMINDER: The candidate's name is {profile.get('name', 'Unknown')}.
-- Include the 4-5 MOST RELEVANT work experience roles — skip older/less relevant roles to fit 1 page
-- 2-3 bullet points per role, tailored to the TARGET JOB
-- Mirror keywords from the job description for ATS matching
+
+EXPERIENCE SELECTION (relevance-based, NOT just recency):
+1. Read the TARGET JOB description carefully — note required skills, domain, seniority
+2. Score EACH profile role by relevance to the target job (0-10):
+   - Shared skills/technologies
+   - Similar domain or problem space
+   - Matching seniority/scope
+3. Select the 4-5 HIGHEST-scoring roles (current role always included)
+4. Skip roles with low relevance even if they are recent
+5. Example: for a "Senior ML Engineer" job, an ML role from 2018 beats a backend role from 2024
+
+CONTENT:
+- 3-4 bullet points per selected role (tailored to target job keywords)
+- Mirror exact phrases from the job description for ATS matching
 - Use ONLY facts from the profile. Do NOT invent any information.
-Generate the resume now. 450-550 words to FILL exactly 1 page. Use the full page — do not leave blank space.
+
+LENGTH: 500-600 words to FILL exactly 1 page. Do NOT leave blank space at the bottom.
+Generate the resume now.
 """
     
     logger.info(f"Generating resume for {job.get('title', 'Unknown')} at {job.get('company', 'Unknown')}")
