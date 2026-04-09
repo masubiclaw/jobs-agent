@@ -494,27 +494,56 @@ class PipelineService:
             self._add_log("ERROR", f"Clean error: {e}")
             return 0
 
-    async def _run_fetch_step(self, cache) -> int:
-        """Fetch missing descriptions via Playwright (no LLM). Returns number fetched."""
-        try:
-            import concurrent.futures
-            from job_agent_coordinator.tools.url_job_fetcher import fetch_page_with_playwright
+    # Domains that block headless browsers — fetching these always times out
+    # because their pages have continuous tracking pixels (networkidle never fires)
+    # AND/or they detect Playwright and serve a captcha/login wall.
+    UNFETCHABLE_DOMAINS = (
+        "indeed.com",
+        "linkedin.com",
+        "glassdoor.com",
+        "glassdoor.co",
+        "ziprecruiter.com",
+    )
 
+    @classmethod
+    def _is_unfetchable(cls, url: str) -> bool:
+        u = url.lower()
+        return any(d in u for d in cls.UNFETCHABLE_DOMAINS)
+
+    async def _run_fetch_step(self, cache) -> int:
+        """Fetch missing descriptions via Playwright (no LLM). Returns number fetched.
+
+        Skips Indeed/LinkedIn/Glassdoor/ZipRecruiter URLs — they aggressively
+        block headless browsers and reliably fail. Their job listings are
+        already populated with what JobSpy returned (title, company, location).
+        """
+        try:
             all_jobs = cache.list_all(limit=10000)
             without_desc = [
                 j for j in all_jobs
-                if not j.get("description", "").strip() and j.get("url", "").strip()
+                if not j.get("description", "").strip()
+                and j.get("url", "").strip()
+                and not self._is_unfetchable(j.get("url", ""))
             ]
+            unfetchable = sum(
+                1 for j in all_jobs
+                if not j.get("description", "").strip()
+                and self._is_unfetchable(j.get("url", ""))
+            )
+
+            if unfetchable:
+                self._add_log("INFO", f"Skipping {unfetchable} jobs from blocked aggregators (Indeed/LinkedIn/Glassdoor/ZipRecruiter)")
 
             if not without_desc:
-                self._add_log("INFO", "All jobs already have descriptions")
+                self._add_log("INFO", "No fetchable jobs missing descriptions")
                 return 0
 
             batch_size = 200
             batch = without_desc[:batch_size]
-            self._add_log("INFO", f"Fetching descriptions for {len(batch)} of {len(without_desc)} jobs...")
+            self._add_log("INFO", f"Fetching descriptions for {len(batch)} of {len(without_desc)} fetchable jobs...")
 
             fetched = 0
+            failed = 0
             for i, job in enumerate(batch):
                 url = job.get("url", "")
                 if not url:
@@ -528,13 +557,16 @@ class PipelineService:
                         desc = page_data["text"][:8000]
                         cache.update_job(job["id"], description=desc)
                         fetched += 1
+                    else:
+                        failed += 1
                 except Exception as e:
-                    self._add_log("DEBUG", f"Fetch failed for {url[:60]}: {e}")
+                    failed += 1
+                    self._add_log("DEBUG", f"Fetch failed for {url[:60]}: {type(e).__name__}: {e}")
                 if (i + 1) % 25 == 0:
-                    self._add_log("INFO", f"  Fetched {fetched}/{i + 1} descriptions")
+                    self._add_log("INFO", f"  Fetched {fetched}/{i + 1} ({failed} failed)")
                 await asyncio.sleep(0.3)
 
-            self._add_log("INFO", f"Fetch complete: {fetched} descriptions added")
+            self._add_log("INFO", f"Fetch complete: {fetched} succeeded, {failed} failed of {len(batch)} attempted")
             return fetched
         except Exception as e:
             self._add_log("ERROR", f"Fetch error: {e}")
@@ -542,11 +574,11 @@ class PipelineService:
 
     @staticmethod
     def _fetch_page_in_thread(url: str):
-        """Run Playwright in a clean thread (no asyncio loop)."""
+        """Run Playwright in a clean thread (no asyncio loop). 20s timeout."""
         import concurrent.futures
         from job_agent_coordinator.tools.url_job_fetcher import fetch_page_with_playwright
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            return ex.submit(fetch_page_with_playwright, url).result(timeout=45)
+            return ex.submit(fetch_page_with_playwright, url).result(timeout=20)
 
     async def _run_match_step(self, cache) -> int:
         """Run two-pass job matching with queue tracking for observability."""

@@ -371,3 +371,35 @@ class TestOndemandDocTracking:
         # Completing a nonexistent key shouldn't raise or affect other items
         service.track_ondemand_complete("nonexistent-key")
         assert service.get_status()["ondemand_docs"]["count"] == 1
+
+
+class TestUnfetchableDomains:
+    """Verify Indeed/LinkedIn/Glassdoor URLs are skipped in fetch step."""
+
+    def test_indeed_url_is_unfetchable(self):
+        assert PipelineService._is_unfetchable("https://www.indeed.com/viewjob?jk=abc")
+        assert PipelineService._is_unfetchable("https://indeed.com/viewjob?jk=abc")
+        assert PipelineService._is_unfetchable("HTTPS://WWW.INDEED.COM/viewjob?jk=abc")
+
+    def test_linkedin_url_is_unfetchable(self):
+        assert PipelineService._is_unfetchable("https://www.linkedin.com/jobs/view/123")
+        assert PipelineService._is_unfetchable("https://linkedin.com/jobs/view/123")
+
+    def test_glassdoor_url_is_unfetchable(self):
+        assert PipelineService._is_unfetchable("https://www.glassdoor.com/job-listing/foo")
+        assert PipelineService._is_unfetchable("https://www.glassdoor.co.uk/job/foo")
+
+    def test_ziprecruiter_url_is_unfetchable(self):
+        assert PipelineService._is_unfetchable("https://www.ziprecruiter.com/jobs/foo")
+
+    def test_company_career_page_is_fetchable(self):
+        """Greenhouse, Lever, Workday, and direct company URLs should be fetched."""
+        assert not PipelineService._is_unfetchable("https://job-boards.greenhouse.io/oura/jobs/123")
+        assert not PipelineService._is_unfetchable("https://jobs.lever.co/anthropic/abc")
+        assert not PipelineService._is_unfetchable("https://wd5.myworkdaysite.com/recruiting/uw/UWHires")
+        assert not PipelineService._is_unfetchable("https://stripe.com/jobs/listing/foo")
+        assert not PipelineService._is_unfetchable("https://careers.example.com/role-123")
+
+    def test_empty_url_is_not_unfetchable(self):
+        # Empty URL is filtered out earlier; this is a sanity check
+        assert not PipelineService._is_unfetchable("")

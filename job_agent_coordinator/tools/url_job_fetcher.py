@@ -62,8 +62,10 @@ def fetch_page_with_playwright(url: str, wait_time: int = 3) -> Optional[Dict[st
             )
             page = context.new_page()
             
-            # Navigate with extended timeout for slow job boards
-            page.goto(url, wait_until="networkidle", timeout=45000)
+            # Use domcontentloaded (fires when DOM is parsed) instead of
+            # networkidle which can hang forever on sites with continuous
+            # tracking pixels (Indeed, LinkedIn, Glassdoor).
+            page.goto(url, wait_until="domcontentloaded", timeout=20000)
             
             # Wait for dynamic content
             page.wait_for_timeout(wait_time * 1000)
