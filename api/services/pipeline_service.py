@@ -674,26 +674,40 @@ class PipelineService:
             matches = cache.list_matches(min_score=70, limit=500)
             generated = 0
 
-            # Load existing documents to check recency
+            # Check which jobs already have recent PDFs on disk (not the doc index,
+            # since pipeline writes directly via resume_tools, bypassing the index)
             recent_job_ids = set()
-            if self._user_id:
-                try:
-                    from api.services.document_service import DocumentService
-                    doc_svc = DocumentService()
-                    existing_docs = doc_svc.list_documents(self._user_id, limit=500)
-                    cutoff = datetime.now() - timedelta(hours=24)
-                    for doc in existing_docs:
-                        try:
-                            doc_time = datetime.fromisoformat(doc.created_at) if isinstance(doc.created_at, str) else doc.created_at
-                            if doc_time > cutoff:
-                                recent_job_ids.add(doc.job_id)
-                        except (ValueError, TypeError):
-                            pass
-                except Exception as e:
-                    self._add_log("DEBUG", f"Could not check existing docs: {e}")
+            try:
+                import os
+                from pathlib import Path
+                pdf_dir = Path("generated_documents")
+                if pdf_dir.exists():
+                    cutoff_ts = time.time() - 86400  # 24 hours ago
+                    for pdf_file in pdf_dir.glob("*.pdf"):
+                        if pdf_file.stat().st_mtime > cutoff_ts:
+                            # Extract company name from filename: Company_YYYY-MM-DD_resume.pdf
+                            company_from_file = pdf_file.stem.rsplit("_", 2)[0] if "_" in pdf_file.stem else ""
+                            if company_from_file:
+                                recent_job_ids.add(company_from_file.lower())
+            except Exception as e:
+                self._add_log("DEBUG", f"Could not check existing PDFs: {e}")
 
-            # Filter out already-generated jobs
-            pending_list = [m for m in matches if m.get("job_id", "") not in recent_job_ids]
+            # Filter out jobs whose company already has a recent PDF
+            # (pipeline uses company name for PDF filename, so same company = same file)
+            def _sanitize(name: str) -> str:
+                return name.replace(" ", "_").replace("/", "_").replace(".", "").replace(",", "").strip().lower()
+
+            pending_list = []
+            seen_companies = set()
+            for m in matches:
+                job = cache.get(m.get("job_id", ""))
+                if not job:
+                    continue
+                company_key = _sanitize(job.get("company", ""))
+                if company_key in recent_job_ids or company_key in seen_companies:
+                    continue
+                seen_companies.add(company_key)
+                pending_list.append(m)
             skipped = len(matches) - len(pending_list)
             total_to_generate = len(pending_list)
             self._add_log("INFO", f"Generate step: {len(matches)} matches >= 70%, {skipped} skipped (within 24h), {total_to_generate} to generate")
